@@ -1,0 +1,7 @@
+core/
+infrastructure/
+node_modules/
+dist/
+dist/tsconfig.build.tsbuildinfo
+tsconfig*.json
+package-lock.json
