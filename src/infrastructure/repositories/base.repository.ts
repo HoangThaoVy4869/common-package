@@ -1,4 +1,4 @@
-import { Model, QueryFilter, UpdateQuery } from 'mongoose';
+import type { Model, QueryFilter, UpdateQuery } from "mongoose";
 
 export interface IRepositoryMapper<TDomain, TPersistence> {
     toEntity(persistence: TPersistence | null): TDomain | null;

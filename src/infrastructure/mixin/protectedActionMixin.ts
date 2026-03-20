@@ -1,4 +1,4 @@
-import { Context, Service, ServiceSchema } from "moleculer";
+import type { Context, Service, ServiceSchema } from "moleculer";
 import _ from "lodash";
 
 interface MongooseService extends Service {

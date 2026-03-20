@@ -1,6 +1,8 @@
-import { Client, estypes, Connection } from '@elastic/elasticsearch';
+import type { estypes, Connection } from "@elastic/elasticsearch";
 import split2 from 'split2';
 import { Transform } from 'stream';
+
+const runtimeRequire = eval("require") as NodeJS.Require;
 
 interface PinoElasticOptions {
     node: string;
@@ -24,6 +26,7 @@ interface LogDocument {
 }
 
 export function pinoElastic(opts: PinoElasticOptions): Transform {
+    const { Client } = runtimeRequire("@elastic/elasticsearch") as typeof import("@elastic/elasticsearch");
     const esVersion = Number(opts['es-version']) || 9;
     const indexOpt = opts.index || 'pino';
     const buildIndexName = typeof indexOpt === 'function' ? indexOpt : null;

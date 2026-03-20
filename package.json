@@ -1,15 +1,10 @@
 {
   "name": "@vyhoang/microservice-clean",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Shared TypeScript utilities and infrastructure helpers for backend services.",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/core/index.js",
+  "types": "./dist/core/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
-      "default": "./dist/index.js"
-    },
     "./core": {
       "types": "./dist/core/index.d.ts",
       "require": "./dist/core/index.js",
@@ -49,7 +44,7 @@
     "utility",
     "infrastructure"
   ],
-  "author": "Your Team",
+  "author": "VyHoang",
   "license": "ISC",
   "type": "commonjs",
   "engines": {
@@ -57,11 +52,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/common.git"
+    "url": "git+https://github.com/HoangThaoVy4869/common-package.git"
   },
-  "homepage": "https://github.com/your-org/common#readme",
+  "homepage": "https://github.com/HoangThaoVy4869/common-package#readme",
   "bugs": {
-    "url": "https://github.com/your-org/common/issues"
+    "url": "https://github.com/HoangThaoVy4869/common-package/issues"
   },
   "dependencies": {
     "amqplib": "^0.10.9",

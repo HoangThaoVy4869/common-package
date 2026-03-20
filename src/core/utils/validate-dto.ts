@@ -1,11 +1,14 @@
-import { plainToInstance, ClassConstructor } from "class-transformer";
-import { validateOrReject } from "class-validator";
-import { BadRequestException } from "@nestjs/common";
+import type { ClassConstructor } from "class-transformer";
+
+const runtimeRequire = eval("require") as NodeJS.Require;
 
 export async function validateDto<T>(
     cls: ClassConstructor<T>,
     payload: unknown,
 ): Promise<T> {
+    const { plainToInstance } = runtimeRequire("class-transformer") as typeof import("class-transformer");
+    const { validateOrReject } = runtimeRequire("class-validator") as typeof import("class-validator");
+    const { BadRequestException } = runtimeRequire("@nestjs/common") as typeof import("@nestjs/common");
     const instance = plainToInstance(cls, payload);
     try {
         await validateOrReject(instance as object, {

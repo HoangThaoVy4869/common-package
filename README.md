@@ -2,7 +2,7 @@
 
 Shared backend utilities and infrastructure helpers for Node.js microservices.
 
-This package ships as a TypeScript-friendly CommonJS library with compiled output in `dist/`.
+This package is intentionally exposed through subpath imports only.
 
 ## Installation
 
@@ -12,15 +12,22 @@ npm install @vyhoang/microservice-clean
 
 Some features depend on framework-specific packages such as NestJS, Moleculer, Mongoose, Redis, or Elasticsearch. Those are declared as optional peer dependencies, so only install the ones your app actually uses.
 
-## Exports
+## Import Rules
 
-The package supports both root imports and subpath imports:
+Use one of these two entrypoints:
 
 ```ts
-import { ResponseHandler, Exception } from "@vyhoang/microservice-clean";
-import { validateDto } from "@vyhoang/microservice-clean/core";
+import { ResponseHandler, Exception, validateDto } from "@vyhoang/microservice-clean/core";
 import { RedisService, RabbitMQEventBus } from "@vyhoang/microservice-clean/infrastructure";
 ```
+
+Do not import from:
+
+```ts
+import { ... } from "@vyhoang/microservice-clean";
+```
+
+Root package import is intentionally not supported.
 
 ## Included Modules
 

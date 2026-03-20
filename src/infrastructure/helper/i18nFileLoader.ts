@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { ServiceBroker } from "moleculer";
+import type { ServiceBroker } from "moleculer";
 
 export interface LoadLocalesOptions {
     localesDir: string;

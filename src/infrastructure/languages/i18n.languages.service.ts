@@ -1,4 +1,4 @@
-import { ServiceSchema } from "moleculer";
+import type { ServiceSchema } from "moleculer";
 
 type Messages = Record<string, string>;
 type LocaleStore = Record<string, Messages>;

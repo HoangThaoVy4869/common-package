@@ -1,4 +1,4 @@
-import { ServiceBroker } from "moleculer";
+import type { ServiceBroker } from "moleculer";
 import { ILanguageService } from "../../core/interfaces/ILanguage";
 
 export class LanguageService implements ILanguageService {
