@@ -1,4 +1,4 @@
-import type { ServiceSchema } from "moleculer";
+import { ServiceSchema } from 'moleculer';
 
 type Messages = Record<string, string>;
 type LocaleStore = Record<string, Messages>;
@@ -10,21 +10,25 @@ function mergeMessages(target: Messages = {}, src: Messages = {}) {
 }
 
 const I18nService: ServiceSchema = {
-    name: "i18n",
+    name: 'i18n',
 
     settings: {
-        defaultLocale: "en",
+        defaultLocale: 'en'
     },
 
     actions: {
         addLocale: {
             params: {
-                locale: "string",
-                messages: "object",
-                override: { type: "boolean", optional: true },
+                locale: 'string',
+                messages: 'object',
+                override: { type: 'boolean', optional: true }
             },
             handler(ctx) {
-                const { locale, messages: newMsgs, override = true } = ctx.params as {
+                const {
+                    locale,
+                    messages: newMsgs,
+                    override = true
+                } = ctx.params as {
                     locale: string;
                     messages: Record<string, string>;
                     override?: boolean;
@@ -35,7 +39,7 @@ const I18nService: ServiceSchema = {
                 if (override) {
                     messages[locale] = mergeMessages(messages[locale], newMsgs);
                 } else {
-                    Object.keys(newMsgs).forEach(k => {
+                    Object.keys(newMsgs).forEach((k) => {
                         if (messages[locale][k] === undefined) {
                             messages[locale][k] = newMsgs[k];
                         }
@@ -43,36 +47,41 @@ const I18nService: ServiceSchema = {
                 }
 
                 return { ok: true, locale, added: Object.keys(newMsgs).length };
-            },
+            }
         },
         translate: {
             params: {
-                key: "number",
-                locale: { type: "string", optional: true },
-                params: { type: "object", optional: true },
-                fallback: { type: "string", optional: true },
+                key: 'string',
+                locale: { type: 'string', optional: true },
+                params: { type: 'object', optional: true },
+                fallback: { type: 'string', optional: true }
             },
             handler(ctx) {
-                const { key, locale, params = {}, fallback } = ctx.params as {
-                    key: string | number;
+                const {
+                    key,
+                    locale,
+                    params = {},
+                    fallback
+                } = ctx.params as {
+                    key: string;
                     locale?: string;
                     params?: Record<string, any>;
                     fallback?: string;
                 };
 
-                const loc = locale || this.settings.defaultLocale || "en";
+                const loc = locale || this.settings.defaultLocale || 'en';
                 const dict = messages[loc] || {};
 
                 let text = dict[key] ?? fallback ?? key;
 
-                Object.keys(params).forEach(p => {
-                    text = text.replace(new RegExp(`{${p}}`, "g"), String(params[p]));
+                Object.keys(params).forEach((p) => {
+                    text = text.replace(new RegExp(`{${p}}`, 'g'), String(params[p]));
                 });
 
                 return text;
-            },
-        },
-    },
+            }
+        }
+    }
 };
 
 export default I18nService;

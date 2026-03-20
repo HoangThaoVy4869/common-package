@@ -25,7 +25,6 @@
     "noFallthroughCasesInSwitch": false
   },
   "include": [
-    "src/index.ts",
     "src/core/**/*.ts",
     "src/infrastructure/**/*.ts"
   ],

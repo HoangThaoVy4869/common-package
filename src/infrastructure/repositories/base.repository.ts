@@ -27,7 +27,7 @@ export abstract class BaseRepository<TDomain, TPersistence> {
         return this.mapper.toEntity(created.toObject() as TPersistence)!;
     }
 
-    async save(filter: QueryFilter<TPersistence>, entity: TDomain): Promise<TDomain> {
+    async update(filter: QueryFilter<TPersistence>, entity: TDomain): Promise<TDomain> {
         const updateData = this.mapper.toPartialPersistence
             ? this.mapper.toPartialPersistence(entity)
             : this.mapper.toPersistence(entity);
@@ -53,6 +53,32 @@ export abstract class BaseRepository<TDomain, TPersistence> {
         return this.mapper.toEntity(updated)!;
     }
 
+    async save(entity: TDomain): Promise<TDomain> {
+        const persistence = this.mapper.toPersistence(entity);
+
+        if (!persistence || Object.keys(persistence).length === 0) {
+            return entity;
+        }
+
+        const id = (persistence as any)._id || (entity as any).id;
+
+        if (!id) {
+            throw new Error('Cannot save entity without id');
+        }
+
+        const updated = await this.model.findOneAndUpdate(
+            { _id: id },
+            { $set: persistence } as UpdateQuery<TPersistence>,
+            {
+                new: true,
+                upsert: true
+            }
+        )
+            .lean<TPersistence>()
+            .exec();
+
+        return this.mapper.toEntity(updated)!;
+    }
 
     async deleteById(id: string): Promise<boolean> {
         const result = await this.model.deleteOne({ id } as QueryFilter<TPersistence>).exec();
