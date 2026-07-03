@@ -1,25 +1,13 @@
 import { randomBytes, randomUUID } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
+import { uuidv7 } from 'uuidv7';
 
-export function generateShortId(): string {
-    return uuidv4().replace(/-/g, '').slice(0, 18);
+export function generateId(): string {
+    return uuidv7();
 }
-
-export function generateProductId() {
-    return `prd_${generateShortId()}`;
-}
-
-export function generateVariantId() {
-    return `var_${generateShortId()}`;
-}
-
-export function generatePriceId() {
-    return `prc_${generateShortId()}`;
-}
-
-export function generateInventoryId() {
-    return `inv_${generateShortId()}`;
-}
+export const generateProductId = generateId;
+export const generateVariantId = generateId;
+export const generateOrderId = generateId;
+export const generatePaymentId = generateId;
 
 export function generateApiKey(clientId: string): string {
     return `${clientId}_${randomUUID()}`;

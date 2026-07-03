@@ -1,109 +1,111 @@
 {
-  "name": "@vyhoang/microservice-clean",
-  "version": "1.0.6",
-  "description": "Shared TypeScript utilities and infrastructure helpers for backend services.",
-  "exports": {
-    "./core": {
-      "types": "./dist/core/index.d.ts",
-      "require": "./dist/core/index.js",
-      "default": "./dist/core/index.js"
+    "name": "@vyhoang/microservice-clean",
+    "version": "1.1.1",
+    "description": "Shared TypeScript utilities and infrastructure helpers for backend services.",
+    "exports": {
+        "./core": {
+            "types": "./dist/core/index.d.ts",
+            "require": "./dist/core/index.js",
+            "default": "./dist/core/index.js"
+        },
+        "./infrastructure": {
+            "types": "./dist/infrastructure/index.d.ts",
+            "require": "./dist/infrastructure/index.js",
+            "default": "./dist/infrastructure/index.js"
+        },
+        "./package.json": "./package.json"
     },
-    "./infrastructure": {
-      "types": "./dist/infrastructure/index.d.ts",
-      "require": "./dist/infrastructure/index.js",
-      "default": "./dist/infrastructure/index.js"
+    "typesVersions": {
+        "*": {
+            "core": [
+                "dist/core/index.d.ts"
+            ],
+            "infrastructure": [
+                "dist/infrastructure/index.d.ts"
+            ]
+        }
     },
-    "./package.json": "./package.json"
-  },
-  "typesVersions": {
-    "*": {
-      "core": [
-        "dist/core/index.d.ts"
-      ],
-      "infrastructure": [
-        "dist/infrastructure/index.d.ts"
-      ]
+    "files": [
+        "dist",
+        "README.md",
+        "LICENSE"
+    ],
+    "scripts": {
+        "build": "tsc -p tsconfig.build.json --incremental false",
+        "prepublishOnly": "npm run build",
+        "test": "echo \"No tests configured\""
+    },
+    "keywords": [
+        "typescript",
+        "common",
+        "shared",
+        "utility",
+        "infrastructure"
+    ],
+    "author": "VyHoang",
+    "license": "ISC",
+    "type": "commonjs",
+    "engines": {
+        "node": ">=20"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/HoangThaoVy4869/common-package.git"
+    },
+    "homepage": "https://github.com/HoangThaoVy4869/common-package#readme",
+    "bugs": {
+        "url": "https://github.com/HoangThaoVy4869/common-package/issues"
+    },
+    "dependencies": {
+        "amqplib": "^0.10.9",
+        "lodash": "^4.17.21",
+        "uuid": "^13.0.0",
+        "uuidv7": "^1.2.1"
+    },
+    "peerDependencies": {
+        "@elastic/elasticsearch": "^9.3.4",
+        "@grpc/grpc-js": "^1.14.4",
+        "@nestjs/common": "^11.1.17",
+        "class-transformer": "^0.5.1",
+        "class-validator": "^0.14.2",
+        "ioredis": "^5.10.0",
+        "split2": "^4.2.0"
+    },
+    "peerDependenciesMeta": {
+        "@grpc/grpc-js": {
+            "optional": true
+        },
+        "@elastic/elasticsearch": {
+            "optional": true
+        },
+        "@nestjs/common": {
+            "optional": true
+        },
+        "class-transformer": {
+            "optional": true
+        },
+        "class-validator": {
+            "optional": true
+        },
+        "ioredis": {
+            "optional": true
+        },
+        "split2": {
+            "optional": true
+        }
+    },
+    "devDependencies": {
+        "@grpc/grpc-js": "^1.14.4",
+        "@elastic/elasticsearch": "^9.3.4",
+        "@nestjs/common": "^11.1.17",
+        "class-transformer": "^0.5.1",
+        "class-validator": "^0.14.2",
+        "ioredis": "^5.10.0",
+        "moleculer": "^0.14.35",
+        "mongoose": "^9.3.1",
+        "axios": "^1.13.6",
+        "twilio": "^5.13.0",
+        "split2": "^4.2.0",
+        "typescript": "^5.9.3"
     }
-  },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE"
-  ],
-  "scripts": {
-    "build": "tsc -p tsconfig.build.json --incremental false",
-    "prepublishOnly": "npm run build",
-    "test": "echo \"No tests configured\""
-  },
-  "keywords": [
-    "typescript",
-    "common",
-    "shared",
-    "utility",
-    "infrastructure"
-  ],
-  "author": "VyHoang",
-  "license": "ISC",
-  "type": "commonjs",
-  "engines": {
-    "node": ">=20"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/HoangThaoVy4869/common-package.git"
-  },
-  "homepage": "https://github.com/HoangThaoVy4869/common-package#readme",
-  "bugs": {
-    "url": "https://github.com/HoangThaoVy4869/common-package/issues"
-  },
-  "dependencies": {
-    "amqplib": "^0.10.9",
-    "axios": "^1.13.6",
-    "lodash": "^4.17.21",
-    "split2": "^4.2.0",
-    "twilio": "^5.13.0",
-    "uuid": "^13.0.0"
-  },
-  "peerDependencies": {
-    "@elastic/elasticsearch": "^9.3.4",
-    "@nestjs/common": "^11.1.17",
-    "class-transformer": "^0.5.1",
-    "class-validator": "^0.14.2",
-    "ioredis": "^5.10.0",
-    "moleculer": "^0.14.35",
-    "mongoose": "^9.3.1"
-  },
-  "peerDependenciesMeta": {
-    "@elastic/elasticsearch": {
-      "optional": true
-    },
-    "@nestjs/common": {
-      "optional": true
-    },
-    "class-transformer": {
-      "optional": true
-    },
-    "class-validator": {
-      "optional": true
-    },
-    "ioredis": {
-      "optional": true
-    },
-    "moleculer": {
-      "optional": true
-    },
-    "mongoose": {
-      "optional": true
-    }
-  },
-  "devDependencies": {
-    "@elastic/elasticsearch": "^9.3.4",
-    "@nestjs/common": "^11.1.17",
-    "class-transformer": "^0.5.1",
-    "class-validator": "^0.14.2",
-    "ioredis": "^5.10.0",
-    "moleculer": "^0.14.35",
-    "mongoose": "^9.3.1",
-    "typescript": "^5.9.3"
-  }
 }

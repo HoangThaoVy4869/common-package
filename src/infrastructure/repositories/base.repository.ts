@@ -1,15 +1,17 @@
-import type { Model, QueryFilter, UpdateQuery } from "mongoose";
+import type { Model, QueryFilter, UpdateQuery } from 'mongoose';
 
 export interface IRepositoryMapper<TDomain, TPersistence> {
     toEntity(persistence: TPersistence | null): TDomain | null;
     toPersistence(domain: TDomain): TPersistence;
     toPartialPersistence?(domain: TDomain): Partial<TPersistence>;
+    getIdentityFilter(domain: TDomain): Record<string, any>;
 }
+
 export abstract class BaseRepository<TDomain, TPersistence> {
     protected constructor(
         protected readonly model: Model<TPersistence>,
         protected readonly mapper: IRepositoryMapper<TDomain, TPersistence>
-    ) { }
+    ) {}
 
     // DOMAIN DRIVEN - DOMAIN FACING QUERY
     async findById(id: string): Promise<TDomain | null> {
@@ -28,22 +30,17 @@ export abstract class BaseRepository<TDomain, TPersistence> {
     }
 
     async update(filter: QueryFilter<TPersistence>, entity: TDomain): Promise<TDomain> {
-        const updateData = this.mapper.toPartialPersistence
-            ? this.mapper.toPartialPersistence(entity)
-            : this.mapper.toPersistence(entity);
+        const updateData = this.mapper.toPartialPersistence ? this.mapper.toPartialPersistence(entity) : this.mapper.toPersistence(entity);
 
         if (!updateData || Object.keys(updateData).length === 0) {
             return entity;
         }
 
-        const updated = await this.model.findOneAndUpdate(
-            filter,
-            { $set: updateData } as UpdateQuery<TPersistence>,
-            {
+        const updated = await this.model
+            .findOneAndUpdate(filter, { $set: updateData } as UpdateQuery<TPersistence>, {
                 new: true,
                 upsert: false
-            }
-        )
+            })
             .lean<TPersistence>()
             .exec();
 
@@ -53,31 +50,18 @@ export abstract class BaseRepository<TDomain, TPersistence> {
         return this.mapper.toEntity(updated)!;
     }
 
-    async save(entity: TDomain): Promise<TDomain> {
+    async save(entity: TDomain): Promise<void> {
         const persistence = this.mapper.toPersistence(entity);
 
-        if (!persistence || Object.keys(persistence).length === 0) {
-            return entity;
-        }
+        if (!persistence || Object.keys(persistence).length === 0) return;
 
-        const id = (persistence as any)._id || (entity as any).id;
-
-        if (!id) {
-            throw new Error('Cannot save entity without id');
-        }
-
-        const updated = await this.model.findOneAndUpdate(
-            { _id: id },
-            { $set: persistence } as UpdateQuery<TPersistence>,
-            {
+        await this.model
+            .findOneAndUpdate(this.mapper.getIdentityFilter(entity), { $set: persistence } as UpdateQuery<TPersistence>, {
                 new: true,
                 upsert: true
-            }
-        )
+            })
             .lean<TPersistence>()
             .exec();
-
-        return this.mapper.toEntity(updated)!;
     }
 
     async deleteById(id: string): Promise<boolean> {
@@ -86,9 +70,7 @@ export abstract class BaseRepository<TDomain, TPersistence> {
     }
 
     // DATA DRIVENT - RAW QUERY
-    async findOneByFilter(filter: QueryFilter<TPersistence>,
-        options?: { sort?: Record<string, 1 | -1>; }
-    ): Promise<TDomain | null> {
+    async findOneByFilter(filter: QueryFilter<TPersistence>, options?: { sort?: Record<string, 1 | -1> }): Promise<TDomain | null> {
         const query = this.model.findOne(filter);
 
         if (options?.sort) {
@@ -99,10 +81,7 @@ export abstract class BaseRepository<TDomain, TPersistence> {
         return this.mapper.toEntity(doc);
     }
 
-    async findManyByFilter(
-        filter: QueryFilter<TPersistence> = {},
-        options?: { limit?: number; sort?: Record<string, 1 | -1>; }
-    ): Promise<TDomain[]> {
+    async findManyByFilter(filter: QueryFilter<TPersistence> = {}, options?: { limit?: number; sort?: Record<string, 1 | -1> }): Promise<TDomain[]> {
         const query = this.model.find(filter);
 
         if (options?.sort) {
@@ -115,17 +94,12 @@ export abstract class BaseRepository<TDomain, TPersistence> {
 
         const docs = await query.lean<TPersistence[]>().exec();
 
-        return docs
-            .map((d) => this.mapper.toEntity(d))
-            .filter((e): e is TDomain => e !== null);
+        return docs.map((d) => this.mapper.toEntity(d)).filter((e): e is TDomain => e !== null);
     }
 
     async updateOneByFilter(filter: QueryFilter<TPersistence>, fields: Partial<TPersistence>): Promise<TDomain | null> {
-        const updated = await this.model.findOneAndUpdate(
-            filter,
-            { $set: fields } as UpdateQuery<TPersistence>,
-            { new: true }
-        )
+        const updated = await this.model
+            .findOneAndUpdate(filter, { $set: fields } as UpdateQuery<TPersistence>, { new: true })
             .lean<TPersistence>()
             .exec();
 
@@ -133,12 +107,7 @@ export abstract class BaseRepository<TDomain, TPersistence> {
     }
 
     async updateManyByFilter(filter: QueryFilter<TPersistence>, fields: Partial<TPersistence>): Promise<number> {
-        const result = await this.model
-            .updateMany(
-                filter,
-                { $set: fields } as UpdateQuery<TPersistence>
-            )
-            .exec();
+        const result = await this.model.updateMany(filter, { $set: fields } as UpdateQuery<TPersistence>).exec();
 
         return result.modifiedCount ?? 0;
     }

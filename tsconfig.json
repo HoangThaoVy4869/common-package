@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "isolatedModules": false,
     "declaration": true,
@@ -14,7 +14,6 @@
     "sourceMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
-    "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
     "strict": false,
@@ -24,12 +23,6 @@
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false
   },
-  "include": [
-    "src/core/**/*.ts",
-    "src/infrastructure/**/*.ts"
-  ],
-  "exclude": [
-    "src/core/core/**",
-    "src/infrastructure/infrastructure/**"
-  ]
+  "include": ["src/core/**/*.ts", "src/infrastructure/**/*.ts"],
+  "exclude": ["src/core/core/**", "src/infrastructure/infrastructure/**"]
 }

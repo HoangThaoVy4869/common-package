@@ -10,7 +10,7 @@ export abstract class BaseMapper<TEntity, TPersistence> {
 
         for (const field of changes) {
             const getter = `get${field.charAt(0).toUpperCase() + field.slice(1)}`;
-            if (typeof entity[getter] === "function") {
+            if (typeof entity[getter] === 'function') {
                 const value = entity[getter]();
                 persistence[field] = value?.getValue ? value.getValue() : value;
             } else {
@@ -18,5 +18,9 @@ export abstract class BaseMapper<TEntity, TPersistence> {
             }
         }
         return persistence;
+    }
+
+    getIdentityFilter(entity: TEntity): Record<string, any> {
+        return { _id: (entity as any).id };
     }
 }

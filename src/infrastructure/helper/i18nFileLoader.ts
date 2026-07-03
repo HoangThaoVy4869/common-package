@@ -1,6 +1,6 @@
-import fs from "fs";
-import path from "path";
-import type { ServiceBroker } from "moleculer";
+import fs from 'fs';
+import path from 'path';
+import type { ServiceBroker } from 'moleculer';
 
 export interface LoadLocalesOptions {
     localesDir: string;
@@ -9,7 +9,7 @@ export interface LoadLocalesOptions {
 }
 
 export async function loadLocales(broker: ServiceBroker, options: LoadLocalesOptions) {
-    const { localesDir, override = true, flagKey = "i18nLocalesLoaded" } = options;
+    const { localesDir, override = true, flagKey = 'i18nLocalesLoaded' } = options;
 
     if (broker.locals?.[flagKey]) return;
 
@@ -18,13 +18,13 @@ export async function loadLocales(broker: ServiceBroker, options: LoadLocalesOpt
         return;
     }
 
-    await broker.waitForServices(["i18n"]);
+    await broker.waitForServices(['i18n']);
 
-    const files = fs.readdirSync(localesDir).filter(f => f.endsWith(".json"));
+    const files = fs.readdirSync(localesDir).filter((f) => f.endsWith('.json'));
     for (const file of files) {
-        const locale = path.basename(file, ".json");
-        const payload = JSON.parse(fs.readFileSync(path.join(localesDir, file), "utf8"));
-        await broker.call("i18n.addLocale", {
+        const locale = path.basename(file, '.json');
+        const payload = JSON.parse(fs.readFileSync(path.join(localesDir, file), 'utf8'));
+        await broker.call('i18n.addLocale', {
             locale,
             messages: payload,
             override
