@@ -1,6 +1,6 @@
 {
     "name": "@vyhoang/microservice-clean",
-    "version": "1.1.1",
+    "version": "1.1.7",
     "description": "Shared TypeScript utilities and infrastructure helpers for backend services.",
     "exports": {
         "./core": {
@@ -12,6 +12,16 @@
             "types": "./dist/infrastructure/index.d.ts",
             "require": "./dist/infrastructure/index.js",
             "default": "./dist/infrastructure/index.js"
+        },
+        "./infrastructure/sms": {
+            "types": "./dist/infrastructure/sms/index.d.ts",
+            "require": "./dist/infrastructure/sms/index.js",
+            "default": "./dist/infrastructure/sms/index.js"
+        },
+        "./infrastructure/repositories": {
+            "types": "./dist/infrastructure/repositories/index.d.ts",
+            "require": "./dist/infrastructure/repositories/index.js",
+            "default": "./dist/infrastructure/repositories/index.js"
         },
         "./package.json": "./package.json"
     },
@@ -59,23 +69,26 @@
     "dependencies": {
         "amqplib": "^0.10.9",
         "lodash": "^4.17.21",
-        "uuid": "^13.0.0",
+        "split2": "^4.2.0",
         "uuidv7": "^1.2.1"
     },
     "peerDependencies": {
         "@elastic/elasticsearch": "^9.3.4",
         "@grpc/grpc-js": "^1.14.4",
+        "@nestjs/microservices": "^11.1.28",
         "@nestjs/common": "^11.1.17",
         "class-transformer": "^0.5.1",
         "class-validator": "^0.14.2",
-        "ioredis": "^5.10.0",
-        "split2": "^4.2.0"
+        "ioredis": "^5.10.0"
     },
     "peerDependenciesMeta": {
         "@grpc/grpc-js": {
             "optional": true
         },
         "@elastic/elasticsearch": {
+            "optional": true
+        },
+        "@nestjs/microservices": {
             "optional": true
         },
         "@nestjs/common": {
@@ -89,22 +102,18 @@
         },
         "ioredis": {
             "optional": true
-        },
-        "split2": {
-            "optional": true
         }
     },
     "devDependencies": {
-        "@grpc/grpc-js": "^1.14.4",
         "@elastic/elasticsearch": "^9.3.4",
+        "@grpc/grpc-js": "^1.14.4",
         "@nestjs/common": "^11.1.17",
+        "@nestjs/microservices": "^11.1.28",
         "class-transformer": "^0.5.1",
         "class-validator": "^0.14.2",
         "ioredis": "^5.10.0",
         "moleculer": "^0.14.35",
         "mongoose": "^9.3.1",
-        "axios": "^1.13.6",
-        "twilio": "^5.13.0",
         "split2": "^4.2.0",
         "typescript": "^5.9.3"
     }
