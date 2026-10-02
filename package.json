@@ -1,6 +1,6 @@
 {
     "name": "@vyhoang/microservice-clean",
-    "version": "1.1.7",
+    "version": "1.2.1",
     "description": "Shared TypeScript utilities and infrastructure helpers for backend services.",
     "exports": {
         "./core": {
@@ -13,10 +13,10 @@
             "require": "./dist/infrastructure/index.js",
             "default": "./dist/infrastructure/index.js"
         },
-        "./infrastructure/sms": {
-            "types": "./dist/infrastructure/sms/index.d.ts",
-            "require": "./dist/infrastructure/sms/index.js",
-            "default": "./dist/infrastructure/sms/index.js"
+        "./infrastructure/queue": {
+            "types": "./dist/infrastructure/queue/index.d.ts",
+            "require": "./dist/infrastructure/queue/index.js",
+            "default": "./dist/infrastructure/queue/index.js"
         },
         "./infrastructure/repositories": {
             "types": "./dist/infrastructure/repositories/index.d.ts",
@@ -32,6 +32,12 @@
             ],
             "infrastructure": [
                 "dist/infrastructure/index.d.ts"
+            ],
+            "infrastructure/queue": [
+                "dist/infrastructure/queue/index.d.ts"
+            ],
+            "infrastructure/repositories": [
+                "dist/infrastructure/repositories/index.d.ts"
             ]
         }
     },
@@ -41,7 +47,8 @@
         "LICENSE"
     ],
     "scripts": {
-        "build": "tsc -p tsconfig.build.json --incremental false",
+        "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+        "build": "npm run clean && tsc -p tsconfig.build.json --incremental false",
         "prepublishOnly": "npm run build",
         "test": "echo \"No tests configured\""
     },
@@ -67,6 +74,7 @@
         "url": "https://github.com/HoangThaoVy4869/common-package/issues"
     },
     "dependencies": {
+        "amqp-connection-manager": "^5.0.0",
         "amqplib": "^0.10.9",
         "lodash": "^4.17.21",
         "split2": "^4.2.0",
@@ -75,7 +83,6 @@
     "peerDependencies": {
         "@elastic/elasticsearch": "^9.3.4",
         "@grpc/grpc-js": "^1.14.4",
-        "@nestjs/microservices": "^11.1.28",
         "@nestjs/common": "^11.1.17",
         "class-transformer": "^0.5.1",
         "class-validator": "^0.14.2",
@@ -86,9 +93,6 @@
             "optional": true
         },
         "@elastic/elasticsearch": {
-            "optional": true
-        },
-        "@nestjs/microservices": {
             "optional": true
         },
         "@nestjs/common": {
@@ -108,7 +112,6 @@
         "@elastic/elasticsearch": "^9.3.4",
         "@grpc/grpc-js": "^1.14.4",
         "@nestjs/common": "^11.1.17",
-        "@nestjs/microservices": "^11.1.28",
         "class-transformer": "^0.5.1",
         "class-validator": "^0.14.2",
         "ioredis": "^5.10.0",
