@@ -50,7 +50,7 @@ export async function publishEnvelope(
         contentType: 'application/json',
         messageId: envelope.id,
         correlationId: envelope.correlationId,
-        headers: { 'x-message-kind': envelope.kind, 'x-message-name': envelope.name }
+        headers: { ...(options.headers || {}), 'x-message-kind': envelope.kind, 'x-message-name': envelope.name }
     });
 }
 
@@ -60,7 +60,7 @@ export async function sendEnvelope(channel: ChannelWrapper, queue: string, envel
         contentType: 'application/json',
         messageId: envelope.id,
         correlationId: envelope.correlationId,
-        headers: { 'x-message-kind': envelope.kind, 'x-message-name': envelope.name }
+        headers: { ...(options.headers || {}), 'x-message-kind': envelope.kind, 'x-message-name': envelope.name }
     });
 }
 

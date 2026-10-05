@@ -27,7 +27,8 @@ export class RabbitMQEventBus implements IMessageBus {
         this.requireReady();
         await this.connection.declareExchange(eventName);
         await publishEnvelope(this.connection.publisher, eventName, '', createEnvelope('event', eventName, payload, options), {
-            persistent: options.persistent ?? true
+            persistent: options.persistent ?? true,
+            headers: options.headers
         });
     }
 
@@ -35,7 +36,8 @@ export class RabbitMQEventBus implements IMessageBus {
         this.requireReady();
         await this.connection.declareQueue(queueName);
         await sendEnvelope(this.connection.publisher, queueName, createEnvelope('command', queueName, payload, options), {
-            persistent: options.persistent ?? true
+            persistent: options.persistent ?? true,
+            headers: options.headers
         });
     }
 

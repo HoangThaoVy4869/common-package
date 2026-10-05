@@ -1,6 +1,6 @@
 {
     "name": "@vyhoang/microservice-clean",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "description": "Shared TypeScript utilities and infrastructure helpers for backend services.",
     "exports": {
         "./core": {
@@ -12,6 +12,26 @@
             "types": "./dist/infrastructure/index.d.ts",
             "require": "./dist/infrastructure/index.js",
             "default": "./dist/infrastructure/index.js"
+        },
+        "./infrastructure/cache": {
+            "types": "./dist/infrastructure/cache/index.d.ts",
+            "require": "./dist/infrastructure/cache/index.js",
+            "default": "./dist/infrastructure/cache/index.js"
+        },
+        "./infrastructure/idempotency": {
+            "types": "./dist/infrastructure/idempotency/index.d.ts",
+            "require": "./dist/infrastructure/idempotency/index.js",
+            "default": "./dist/infrastructure/idempotency/index.js"
+        },
+        "./infrastructure/languages": {
+            "types": "./dist/infrastructure/languages/index.d.ts",
+            "require": "./dist/infrastructure/languages/index.js",
+            "default": "./dist/infrastructure/languages/index.js"
+        },
+        "./infrastructure/validation": {
+            "types": "./dist/infrastructure/validation/index.d.ts",
+            "require": "./dist/infrastructure/validation/index.js",
+            "default": "./dist/infrastructure/validation/index.js"
         },
         "./infrastructure/queue": {
             "types": "./dist/infrastructure/queue/index.d.ts",
@@ -32,6 +52,18 @@
             ],
             "infrastructure": [
                 "dist/infrastructure/index.d.ts"
+            ],
+            "infrastructure/cache": [
+                "dist/infrastructure/cache/index.d.ts"
+            ],
+            "infrastructure/idempotency": [
+                "dist/infrastructure/idempotency/index.d.ts"
+            ],
+            "infrastructure/languages": [
+                "dist/infrastructure/languages/index.d.ts"
+            ],
+            "infrastructure/validation": [
+                "dist/infrastructure/validation/index.d.ts"
             ],
             "infrastructure/queue": [
                 "dist/infrastructure/queue/index.d.ts"
@@ -115,7 +147,6 @@
         "class-transformer": "^0.5.1",
         "class-validator": "^0.14.2",
         "ioredis": "^5.10.0",
-        "moleculer": "^0.14.35",
         "mongoose": "^9.3.1",
         "split2": "^4.2.0",
         "typescript": "^5.9.3"

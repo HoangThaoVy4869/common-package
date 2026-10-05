@@ -19,6 +19,7 @@ export interface PublishOptions {
     correlationId?: string;
     causationId?: string;
     metadata?: Record<string, unknown>;
+    headers?: Record<string, unknown>;
 }
 
 export interface RetryPolicy {
