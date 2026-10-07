@@ -1,6 +1,6 @@
 {
     "name": "@vyhoang/microservice-clean",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "description": "Shared TypeScript utilities and infrastructure helpers for backend services.",
     "exports": {
         "./core": {
@@ -18,6 +18,11 @@
             "require": "./dist/infrastructure/cache/index.js",
             "default": "./dist/infrastructure/cache/index.js"
         },
+        "./infrastructure/logger": {
+            "types": "./dist/infrastructure/logger/index.d.ts",
+            "require": "./dist/infrastructure/logger/index.js",
+            "default": "./dist/infrastructure/logger/index.js"
+        },
         "./infrastructure/idempotency": {
             "types": "./dist/infrastructure/idempotency/index.d.ts",
             "require": "./dist/infrastructure/idempotency/index.js",
@@ -32,6 +37,16 @@
             "types": "./dist/infrastructure/validation/index.d.ts",
             "require": "./dist/infrastructure/validation/index.js",
             "default": "./dist/infrastructure/validation/index.js"
+        },
+        "./infrastructure/filters": {
+            "types": "./dist/infrastructure/filters/index.d.ts",
+            "require": "./dist/infrastructure/filters/index.js",
+            "default": "./dist/infrastructure/filters/index.js"
+        },
+        "./infrastructure/mapper": {
+            "types": "./dist/infrastructure/mapper/index.d.ts",
+            "require": "./dist/infrastructure/mapper/index.js",
+            "default": "./dist/infrastructure/mapper/index.js"
         },
         "./infrastructure/queue": {
             "types": "./dist/infrastructure/queue/index.d.ts",
@@ -56,6 +71,9 @@
             "infrastructure/cache": [
                 "dist/infrastructure/cache/index.d.ts"
             ],
+            "infrastructure/logger": [
+                "dist/infrastructure/logger/index.d.ts"
+            ],
             "infrastructure/idempotency": [
                 "dist/infrastructure/idempotency/index.d.ts"
             ],
@@ -64,6 +82,12 @@
             ],
             "infrastructure/validation": [
                 "dist/infrastructure/validation/index.d.ts"
+            ],
+            "infrastructure/filters": [
+                "dist/infrastructure/filters/index.d.ts"
+            ],
+            "infrastructure/mapper": [
+                "dist/infrastructure/mapper/index.d.ts"
             ],
             "infrastructure/queue": [
                 "dist/infrastructure/queue/index.d.ts"

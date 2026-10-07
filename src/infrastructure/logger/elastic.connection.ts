@@ -1,10 +1,10 @@
-import type { estypes, Connection } from "@elastic/elasticsearch";
+import type { Client as ElasticClient, estypes, Connection } from "@elastic/elasticsearch";
 import split2 from 'split2';
 import { Transform } from 'stream';
 
 const runtimeRequire = eval("require") as NodeJS.Require;
 
-interface PinoElasticOptions {
+export interface PinoElasticOptions {
     node: string;
     auth?: { username: string; password: string } | { apiKey: string };
     cloud?: { id: string };
@@ -14,9 +14,13 @@ interface PinoElasticOptions {
     type?: string;
     op_type?: estypes.OpType;
     'es-version'?: number;
+    esVersion?: number;
     'flush-bytes'?: number;
+    flushBytes?: number;
     'flush-interval'?: number;
+    flushInterval?: number;
     'bulk-size'?: number; // deprecated
+    refreshOnCompletion?: boolean | string;
 }
 
 interface LogDocument {
@@ -26,15 +30,24 @@ interface LogDocument {
 }
 
 export function pinoElastic(opts: PinoElasticOptions): Transform {
-    const { Client } = runtimeRequire("@elastic/elasticsearch") as typeof import("@elastic/elasticsearch");
-    const esVersion = Number(opts['es-version']) || 9;
+    let Client: typeof ElasticClient;
+    try {
+        const esModule = runtimeRequire("@elastic/elasticsearch");
+        Client = esModule.Client;
+    } catch {
+        throw new Error(
+            "[pinoElastic] Package '@elastic/elasticsearch' is required but not installed. Please install it with: npm install @elastic/elasticsearch"
+        );
+    }
+
+    const esVersion = Number(opts.esVersion ?? opts['es-version']) || 9;
     const indexOpt = opts.index || 'pino';
     const buildIndexName = typeof indexOpt === 'function' ? indexOpt : null;
     const type = esVersion >= 7 ? undefined : opts.type || 'log';
     const opType = esVersion >= 7 ? opts.op_type : undefined;
 
     if (opts['bulk-size']) {
-        process.emitWarning('The "bulk-size" option has been deprecated, use "flush-bytes" instead');
+        process.emitWarning('The "bulk-size" option has been deprecated, use "flush-bytes" (or "flushBytes") instead');
         delete opts['bulk-size'];
     }
 
@@ -62,16 +75,22 @@ export function pinoElastic(opts: PinoElasticOptions): Transform {
             try {
                 value = JSON.parse(line);
             } catch (error) {
-                this.emit('unknown', line, error);
+                if (this.listenerCount('unknown') > 0) {
+                    this.emit('unknown', line, error);
+                }
                 return;
             }
 
             if (typeof value === 'boolean') {
-                this.emit('unknown', line, 'Boolean value ignored');
+                if (this.listenerCount('unknown') > 0) {
+                    this.emit('unknown', line, 'Boolean value ignored');
+                }
                 return;
             }
             if (value === null) {
-                this.emit('unknown', line, 'Null value ignored');
+                if (this.listenerCount('unknown') > 0) {
+                    this.emit('unknown', line, 'Null value ignored');
+                }
                 return;
             }
             if (typeof value !== 'object') {
@@ -92,14 +111,18 @@ export function pinoElastic(opts: PinoElasticOptions): Transform {
         tls: { rejectUnauthorized: opts.rejectUnauthorized },
     });
 
+    const flushBytes = opts.flushBytes ?? opts['flush-bytes'] ?? 1000;
+    const flushInterval = opts.flushInterval ?? opts['flush-interval'] ?? 30000;
+    const refreshOnCompletion = opts.refreshOnCompletion !== undefined ? opts.refreshOnCompletion : getIndexName();
+
     const bulkPromise = client.helpers.bulk<LogDocument>({
         datasource: splitter,
-        flushBytes: opts['flush-bytes'] || 1000,
-        flushInterval: opts['flush-interval'] || 30000,
-        refreshOnCompletion: getIndexName(),
+        flushBytes,
+        flushInterval,
+        refreshOnCompletion,
         onDocument(doc) {
             const date = doc.time || doc['@timestamp'] || new Date().toISOString();
-            if (opType === 'create') {
+            if (!doc['@timestamp']) {
                 doc['@timestamp'] = date;
             }
 
@@ -113,15 +136,28 @@ export function pinoElastic(opts: PinoElasticOptions): Transform {
         },
         onDrop(doc) {
             const error = new Error('Dropped document');
-            console.error('Dropped log document:', error);
             (error as any).document = doc;
-            splitter.emit('insertError', error);
+            if (splitter.listenerCount('insertError') > 0) {
+                splitter.emit('insertError', error);
+            } else {
+                console.error('[pinoElastic] Dropped log document:', error);
+            }
         }
     });
 
     bulkPromise.then(
-        (stats) => splitter.emit('insert', stats),
-        (err) => splitter.emit('error', err)
+        (stats) => {
+            if (splitter.listenerCount('insert') > 0) {
+                splitter.emit('insert', stats);
+            }
+        },
+        (err) => {
+            if (splitter.listenerCount('error') > 0) {
+                splitter.emit('error', err);
+            } else {
+                console.error('[pinoElastic] Elasticsearch connection/indexing error:', err);
+            }
+        }
     );
 
     // Clean up when stream is destroyed

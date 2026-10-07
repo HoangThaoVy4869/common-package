@@ -21,8 +21,8 @@ npm install @vyhoang/microservice-clean
 Install optional peer dependencies depending on the modules you use:
 
 ```bash
-# Core & Validation (recommended for NestJS services)
-npm install @nestjs/common class-validator class-transformer reflect-metadata
+# Core DTO Validation (Required if using validateDto() helper)
+npm install class-transformer class-validator @nestjs/common reflect-metadata
 
 # Redis Cache & Distributed Lock
 npm install ioredis
@@ -32,6 +32,9 @@ npm install @grpc/grpc-js
 
 # Multi-language i18n
 npm install nestjs-i18n
+
+# Elasticsearch & Structured Logging
+npm install @elastic/elasticsearch pino
 ```
 
 ---
@@ -41,8 +44,9 @@ npm install nestjs-i18n
 Import from supported subpaths:
 
 ```ts
-// Core (Entities, Value Objects, Interfaces, Errors, Response Envelopes)
+// Core (Entities, Value Objects, Interfaces, Errors, Validation, Response Envelopes)
 import { 
+  validateDto,
   ResponseHandler, 
   BusinessError, 
   NotFoundError, 
@@ -51,6 +55,7 @@ import {
   ForbiddenError, 
   RequestContext, 
   REQUEST_METADATA,
+  ILogger,
   ILanguageService,
   IRedisService,
   IIdempotencyRepository
@@ -59,6 +64,7 @@ import {
 // Infrastructure subpaths (Recommended to import specific domains for minimal bundle footprint)
 import { RabbitMQConnection, RabbitMQEventBus } from "@vyhoang/microservice-clean/infrastructure/queue";
 import { RedisService, BaseRedisService } from "@vyhoang/microservice-clean/infrastructure/cache";
+import { pinoElastic, PinoLogger } from "@vyhoang/microservice-clean/infrastructure/logger";
 import { createI18nOptions, createI18nAsyncConfig, LanguageService } from "@vyhoang/microservice-clean/infrastructure/languages";
 import { RedisIdempotencyRepository, withIdempotency } from "@vyhoang/microservice-clean/infrastructure/idempotency";
 import { GrpcValidationPipe, ValidationSchema } from "@vyhoang/microservice-clean/infrastructure/validation";
@@ -363,6 +369,124 @@ import {
 throw new NotFoundError('Account not found', 4040);
 throw new UnauthorizedError('Session expired', 4010);
 throw new DuplicateError('Email already registered', 4090);
+```
+
+---
+
+### 8. Elasticsearch Logging & Structured Pino (`infrastructure/logger`)
+
+High-throughput, buffered stream adapter routing Pino structured JSON logs directly into Elasticsearch clusters with standard ECS `@timestamp` compliance and process-crash resilience:
+
+- **High-Throughput Batching**: Uses `@elastic/elasticsearch` Bulk helper with configurable `flushBytes` and `flushInterval`.
+- **Dynamic Index Partitioning**: Supports date interpolation patterns (e.g. `pino-%{DATE}`) or custom index naming resolver functions.
+- **ECS & Kibana Compatibility**: Guarantees standard ISO-8601 `@timestamp` field so logs can be queried immediately in Kibana Discover without extra index pattern adjustments.
+- **Fail-Safe Stream Handling**: Catches unhandled stream errors to prevent Elasticsearch connection drops from crashing the Node.js application process.
+- **Structured Metadata Preservation**: `PinoLogger` correctly formats metadata parameters so fields (`userId`, `orderId`, `traceId`, stack traces) are indexed as top-level JSON attributes in Elasticsearch.
+
+#### Basic Setup (Pino + Elasticsearch Multi-stream)
+
+```ts
+import pino from 'pino';
+import { pinoElastic } from '@vyhoang/microservice-clean/infrastructure/logger';
+
+export function createElasticPinoLogger() {
+  const esStream = pinoElastic({
+    node: process.env.ELASTICSEARCH_NODE || 'http://localhost:9200',
+    auth: {
+      username: process.env.ELASTIC_USER || 'elastic',
+      password: process.env.ELASTIC_PASSWORD || 'changeme'
+    },
+    index: 'microservice-logs-%{DATE}', // Daily rotating index: microservice-logs-2026-10-07
+    flushBytes: 1000,                  // Flush every 1000 bytes
+    flushInterval: 5000,               // Or flush every 5000ms
+    rejectUnauthorized: false
+  });
+
+  // Optional lifecycle hooks:
+  esStream.on('insert', (stats) => console.log('[ES Logger] Flushed bulk logs:', stats.total));
+  esStream.on('error', (err) => console.error('[ES Logger] Indexing error:', err));
+
+  // Multi-stream: Write simultaneously to stdout (for container logs) and Elasticsearch:
+  return pino(
+    { level: process.env.LOG_LEVEL || 'info' },
+    pino.multistream([
+      { stream: process.stdout },
+      { stream: esStream }
+    ])
+  );
+}
+```
+
+#### Clean Architecture Adapter (`PinoLogger` / `ILogger`)
+
+Wrap Pino with `PinoLogger` to satisfy the domain `ILogger` port without leaking Pino details into application use cases:
+
+```ts
+import { PinoLogger } from '@vyhoang/microservice-clean/infrastructure/logger';
+import { ILogger } from '@vyhoang/microservice-clean/core';
+
+const rawPino = createElasticPinoLogger();
+const logger: ILogger = new PinoLogger(rawPino);
+
+// Metadata fields are mapped as top-level JSON attributes in Elasticsearch:
+logger.info('Order checkout initialized', { 
+  orderId: 'ord-999', 
+  userId: 'usr-123', 
+  total: 450000 
+});
+
+// Supports Error objects with auto-extracted message and stack trace:
+logger.error(new Error('Payment gateway timeout'), { 
+  orderId: 'ord-999', 
+  provider: 'VNPAY' 
+});
+```
+
+---
+
+### 9. DTO Validation Helper (`core / validateDto`)
+
+A standalone validation helper that transforms plain request dictionaries or event payloads into strongly-typed class instances and enforces validation rules:
+
+> [!NOTE]
+> **Required Peer Dependencies:**
+> To use `validateDto`, you must install `class-transformer`, `class-validator`, and `@nestjs/common`:
+> ```bash
+> npm install class-transformer class-validator @nestjs/common reflect-metadata
+> ```
+
+- **Type Transformation**: Converts plain raw JSON objects into class instances via `class-transformer` (`plainToInstance`).
+- **Strict Whitelist Protection**: Validates with `{ whitelist: true, forbidNonWhitelisted: true }` through `class-validator` (`validateOrReject`), strictly blocking unexpected or malicious fields.
+- **NestJS Exception Mapping**: On validation failure, automatically throws standard NestJS `BadRequestException` containing detailed field error constraints.
+
+#### Usage Example
+
+```ts
+import { IsString, IsEmail, MinLength, IsOptional, IsInt, Min } from 'class-validator';
+import { validateDto } from '@vyhoang/microservice-clean/core';
+
+// 1. Define your typed DTO class with class-validator decorators:
+export class CreateAccountDto {
+  @IsEmail({}, { message: 'Invalid email address' })
+  email!: string;
+
+  @IsString()
+  @MinLength(6, { message: 'Password must have at least 6 characters' })
+  password!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(18, { message: 'Age must be 18 or older' })
+  age?: number;
+}
+
+// 2. Validate incoming payloads inside usecases, controller handlers, or event consumers:
+async function handleCreateAccount(rawPayload: unknown) {
+  // Returns strongly-typed instance CreateAccountDto:
+  const dto = await validateDto(CreateAccountDto, rawPayload);
+  
+  console.log(dto.email, dto.password);
+}
 ```
 
 ---
