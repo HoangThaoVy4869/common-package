@@ -1,6 +1,6 @@
 import { Catch, RpcExceptionFilter, ArgumentsHost, Optional } from '@nestjs/common';
 import { throwError, Observable } from 'rxjs';
-import { BusinessError } from '../../core/errors';
+import { BusinessError } from '@core/errors';
 
 export type ErrorStatusMapper = (code: number) => number;
 export type BusinessErrorMapper = (error: BusinessError) => number;

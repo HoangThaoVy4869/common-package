@@ -1,5 +1,5 @@
 import { Metadata } from '@grpc/grpc-js';
-import { REQUEST_METADATA, RequestContext } from '../../core/interfaces';
+import { REQUEST_METADATA, RequestContext } from '@core/interfaces';
 
 export class MetadataMapper {
     static toRequestContext(metadata: Metadata): RequestContext {

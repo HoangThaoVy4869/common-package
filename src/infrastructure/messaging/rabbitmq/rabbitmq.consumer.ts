@@ -1,9 +1,8 @@
 import { ConfirmChannel, Message } from 'amqplib';
 import { ChannelWrapper, SetupFunc } from 'amqp-connection-manager';
-import { RabbitMQConnection } from '../RabbitMQConnection';
-import { confirmedRawSendToQueue, parseEnvelope } from './rabbitmq.message';
-import { declareSubscriptionTopology, SubscriptionTopology } from './rabbitmq.topology';
-import { MessageEnvelope, MessageHandler, MessageInbox, MessageKind, SubscriptionOptions } from './rabbitmq.types';
+import { RabbitMQConnection } from '@rabbitmq/RabbitMQConnection';
+import { confirmedRawSendToQueue, declareSubscriptionTopology, parseEnvelope, SubscriptionTopology } from '@rabbitmq/rabbitmq.codec';
+import { isPermanentError, type MessageEnvelope, type MessageHandler, type MessageKind, type SubscriptionOptions } from '@messaging-common';
 
 const RETRY_HEADER = 'x-event-bus-retry-count';
 
@@ -16,7 +15,6 @@ export class RabbitMQConsumer {
 
     constructor(
         private readonly connection: RabbitMQConnection,
-        private readonly inbox: MessageInbox,
         private readonly kind: MessageKind,
         private readonly name: string,
         private readonly handler: MessageHandler,
@@ -81,23 +79,13 @@ export class RabbitMQConsumer {
 
     private async consume(topology: SubscriptionTopology, channel: ConfirmChannel, message: Message): Promise<void> {
         this.inFlight++;
-        let envelope: MessageEnvelope | undefined;
-        let claimed = false;
         try {
-            envelope = parseEnvelope(message, this.kind, this.name);
-            claimed = await this.inbox.claim(envelope.id);
-            if (!claimed) {
-                channel.ack(message);
-                return;
-            }
-
+            const envelope = parseEnvelope(message, this.kind, this.name);
             await this.handler(envelope.payload, message, envelope);
-            await this.inbox.complete(envelope.id);
             channel.ack(message);
         } catch (error) {
             console.error(`[MQ] Handler failed for ${this.kind}=${this.name}`, error);
-            if (claimed && envelope) await this.inbox.release(envelope.id);
-            await this.retryOrDeadLetter(topology, channel, message);
+            await this.retryOrDeadLetter(topology, channel, message, error);
         } finally {
             this.inFlight--;
             if (this.inFlight === 0) {
@@ -106,11 +94,27 @@ export class RabbitMQConsumer {
         }
     }
 
-    private async retryOrDeadLetter(topology: SubscriptionTopology, channel: ConfirmChannel, message: Message): Promise<void> {
+    private async retryOrDeadLetter(topology: SubscriptionTopology, channel: ConfirmChannel, message: Message, error?: unknown): Promise<void> {
+        const isPermanent = isPermanentError(error);
         const maxRetries = this.options.retry?.maxRetries ?? 3;
         const headers = message.properties.headers ?? {};
         const retryCount = Number(headers[RETRY_HEADER] ?? 0);
-        const targetQueue = retryCount < maxRetries && topology.retryQueue ? topology.retryQueue : topology.deadLetterQueue;
+
+        let targetQueue: string;
+        let nextRetryCount = retryCount;
+        let dlqReason: string | undefined;
+
+        if (isPermanent) {
+            targetQueue = topology.deadLetterQueue;
+            dlqReason = 'permanent-failure';
+            console.warn(`[MQ] Permanent error on ${this.kind}=${this.name}, forwarding directly to DLQ ${targetQueue}`);
+        } else if (retryCount < maxRetries && topology.retryQueue) {
+            targetQueue = topology.retryQueue;
+            nextRetryCount = retryCount + 1;
+        } else {
+            targetQueue = topology.deadLetterQueue;
+            dlqReason = 'max-retries-exceeded';
+        }
 
         if (!targetQueue) {
             channel.nack(message, false, false);
@@ -124,11 +128,15 @@ export class RabbitMQConsumer {
                 contentEncoding: message.properties.contentEncoding,
                 messageId: message.properties.messageId,
                 correlationId: message.properties.correlationId,
-                headers: { ...headers, [RETRY_HEADER]: retryCount + 1 }
+                headers: {
+                    ...headers,
+                    [RETRY_HEADER]: nextRetryCount,
+                    ...(dlqReason ? { 'x-dlq-reason': dlqReason } : {})
+                }
             });
             channel.ack(message);
-        } catch (error) {
-            console.error(`[MQ] Could not route failed message to ${targetQueue}`, error);
+        } catch (err) {
+            console.error(`[MQ] Could not route failed message to ${targetQueue}`, err);
             channel.nack(message, false, true);
         }
     }

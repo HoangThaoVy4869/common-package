@@ -1,11 +1,18 @@
 import { AmqpConnectionManager, ChannelWrapper, CreateChannelOpts, SetupFunc, connect } from 'amqp-connection-manager';
-import { RabbitMQConnectionOptions } from './rabbitmq/rabbitmq.types';
+import { RabbitMQConnectionOptions } from './rabbitmq.types';
 
-export type { RabbitMQConnectionOptions, AlternateExchangeOptions } from './rabbitmq/rabbitmq.types';
+export type { RabbitMQConnectionOptions, AlternateExchangeOptions } from './rabbitmq.types';
 
 export const DEFAULT_ALTERNATE_EXCHANGE = 'unrouted.events.exchange';
 export const DEFAULT_UNROUTED_EVENTS_QUEUE = 'unrouted.events.q';
 
+/**
+ * RabbitMQConnection
+ *
+ * Manages an AMQP connection manager with automatic reconnection, heartbeat,
+ * dedicated publisher channel, and optional unrouted Alternate Exchange setup.
+ * Recommended lifecycle: 1 shared instance per service process.
+ */
 export class RabbitMQConnection {
     private readonly manager: AmqpConnectionManager;
     private readonly connectTimeoutMs: number;

@@ -2,6 +2,48 @@
   "compilerOptions": {
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "src/*"
+      ],
+      "@core": [
+        "src/core/index"
+      ],
+      "@core/*": [
+        "src/core/*"
+      ],
+      "@infrastructure": [
+        "src/infrastructure/index"
+      ],
+      "@infrastructure/*": [
+        "src/infrastructure/*"
+      ],
+      "@messaging": [
+        "src/infrastructure/messaging/index"
+      ],
+      "@messaging/*": [
+        "src/infrastructure/messaging/*"
+      ],
+      "@messaging-common": [
+        "src/infrastructure/messaging/common/index"
+      ],
+      "@messaging-common/*": [
+        "src/infrastructure/messaging/common/*"
+      ],
+      "@kafka": [
+        "src/infrastructure/messaging/kafka/index"
+      ],
+      "@kafka/*": [
+        "src/infrastructure/messaging/kafka/*"
+      ],
+      "@rabbitmq": [
+        "src/infrastructure/messaging/rabbitmq/index"
+      ],
+      "@rabbitmq/*": [
+        "src/infrastructure/messaging/rabbitmq/*"
+      ]
+    },
     "esModuleInterop": true,
     "isolatedModules": false,
     "declaration": true,
@@ -23,6 +65,12 @@
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false
   },
-  "include": ["src/core/**/*.ts", "src/infrastructure/**/*.ts"],
-  "exclude": ["src/core/core/**", "src/infrastructure/infrastructure/**"]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test"
+  ]
 }

@@ -1,2 +1,2 @@
 export * from './logger';
-export * from './elastic.connection';
+export * from './elastic.transport';

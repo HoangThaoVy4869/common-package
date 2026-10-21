@@ -1,5 +1,5 @@
-import { IIdempotencyRepository } from '../../core/interfaces/IIdempotencyRepository';
-import { IRedisService } from '../../core/interfaces/IRedisService';
+import { IIdempotencyRepository } from '@core/interfaces/IIdempotencyRepository';
+import { IRedisService } from '@core/interfaces/IRedisService';
 
 export interface RedisIdempotencyOptions {
     keyPrefix?: string;

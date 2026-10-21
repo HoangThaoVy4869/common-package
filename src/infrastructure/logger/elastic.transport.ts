@@ -1,8 +1,6 @@
-import type { Client as ElasticClient, estypes, Connection } from "@elastic/elasticsearch";
+import { Client as ElasticClient, estypes, Connection } from "@elastic/elasticsearch";
 import split2 from 'split2';
 import { Transform } from 'stream';
-
-const runtimeRequire = eval("require") as NodeJS.Require;
 
 export interface PinoElasticOptions {
     node: string;
@@ -29,17 +27,10 @@ interface LogDocument {
     [key: string]: any;
 }
 
+/**
+ * Creates a stream transform that batches and indexes Pino JSON logs into Elasticsearch.
+ */
 export function pinoElastic(opts: PinoElasticOptions): Transform {
-    let Client: typeof ElasticClient;
-    try {
-        const esModule = runtimeRequire("@elastic/elasticsearch");
-        Client = esModule.Client;
-    } catch {
-        throw new Error(
-            "[pinoElastic] Package '@elastic/elasticsearch' is required but not installed. Please install it with: npm install @elastic/elasticsearch"
-        );
-    }
-
     const esVersion = Number(opts.esVersion ?? opts['es-version']) || 9;
     const indexOpt = opts.index || 'pino';
     const buildIndexName = typeof indexOpt === 'function' ? indexOpt : null;
@@ -104,7 +95,7 @@ export function pinoElastic(opts: PinoElasticOptions): Transform {
         { autoDestroy: true }
     );
 
-    const client = new Client({
+    const client = new ElasticClient({
         node: opts.node,
         auth: opts.auth,
         cloud: opts.cloud,
@@ -160,7 +151,6 @@ export function pinoElastic(opts: PinoElasticOptions): Transform {
         }
     );
 
-    // Clean up when stream is destroyed
     (splitter as any)._destroy = function (err: Error | null, cb: (err?: Error | null) => void) {
         bulkPromise.then(
             () => cb(err),

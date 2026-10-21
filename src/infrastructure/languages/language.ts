@@ -1,4 +1,4 @@
-import { ILanguageService, TranslateOptions } from '../../core/interfaces/ILanguage';
+import { ILanguageService, TranslateOptions } from '@core/interfaces/ILanguage';
 
 export interface II18nTranslator {
     translate(key: string, options?: { lang?: string; args?: Record<string, any>; defaultValue?: string }): any;

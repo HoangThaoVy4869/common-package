@@ -1,4 +1,4 @@
-import type { Redis as RedisType, RedisOptions } from "ioredis";
+import Redis, { type Redis as RedisType, type RedisOptions } from "ioredis";
 
 export interface RedisConfigOptions extends RedisOptions {
     url?: string;
@@ -6,22 +6,8 @@ export interface RedisConfigOptions extends RedisOptions {
 }
 
 let redisClient: RedisType | null = null;
-const runtimeRequire = eval("require") as NodeJS.Require;
-
-function getIoredisClass(): typeof import("ioredis").default {
-    try {
-        const ioredis = runtimeRequire("ioredis");
-        return ioredis.default || ioredis;
-    } catch {
-        throw new Error(
-            "ioredis is required to use Redis features. Please install ioredis: npm install ioredis"
-        );
-    }
-}
 
 export function createRedisClient(options?: RedisConfigOptions): RedisType {
-    const Redis = getIoredisClass();
-
     const connectionUrl = options?.url || options?.uri || process.env.REDIS_URI || process.env.REDIS_URL;
 
     const baseOptions: RedisOptions = {

@@ -12,13 +12,15 @@ This package is intentionally exposed through subpath imports only.
 
 ## Installation
 
+Install the package directly from npm:
+
 ```bash
 npm install @vyhoang/microservice-clean
 ```
 
 ### Peer Dependencies
 
-Install optional peer dependencies depending on the modules you use:
+Install optional peer dependencies depending on the modules your service uses:
 
 ```bash
 # Core DTO Validation (Required if using validateDto() helper)
@@ -27,14 +29,14 @@ npm install class-transformer class-validator @nestjs/common reflect-metadata
 # Redis Cache & Distributed Lock
 npm install ioredis
 
+# Elasticsearch Client & Document Search
+npm install @elastic/elasticsearch
+
 # gRPC Microservices
 npm install @grpc/grpc-js
 
 # Multi-language i18n
 npm install nestjs-i18n
-
-# Elasticsearch & Structured Logging
-npm install @elastic/elasticsearch pino
 ```
 
 ---
@@ -51,6 +53,7 @@ import {
   BusinessError, 
   NotFoundError, 
   DuplicateError, 
+  ConflictError,
   UnauthorizedError, 
   ForbiddenError, 
   RequestContext, 
@@ -58,16 +61,37 @@ import {
   ILogger,
   ILanguageService,
   IRedisService,
-  IIdempotencyRepository
+  IIdempotencyRepository,
+  IEventBus,
+  ICommandBus,
+  IMessageBus,
+  BusMessageHandler,
+  IElasticSearchClient,
+  IElasticClient
 } from "@vyhoang/microservice-clean/core";
 
-// Infrastructure subpaths (Recommended to import specific domains for minimal bundle footprint)
-import { RabbitMQConnection, RabbitMQEventBus } from "@vyhoang/microservice-clean/infrastructure/queue";
-import { RedisService, BaseRedisService } from "@vyhoang/microservice-clean/infrastructure/cache";
-import { pinoElastic, PinoLogger } from "@vyhoang/microservice-clean/infrastructure/logger";
+// Messaging (RabbitMQ & Kafka as independent transports)
+import { 
+  RabbitMQConnection, 
+  RabbitMQEventBus, 
+  KafkaConnection, 
+  KafkaEventBus,
+  MessageEnvelope
+} from "@vyhoang/microservice-clean/infrastructure/messaging";
+
+// Redis Cache & Distributed Lock (supports both natural args & object options)
+import { RedisService, BaseRedisService, createRedisClient } from "@vyhoang/microservice-clean/infrastructure/cache";
+
+// Elasticsearch Client & Search Service
+import { ElasticSearchService, createElasticClient, getSharedElasticClient } from "@vyhoang/microservice-clean/infrastructure/elasticsearch";
+
+// Structured & Pretty Console Logging (Zero external dependencies)
+import { createLogger, PinoLogger, pinoElastic } from "@vyhoang/microservice-clean/infrastructure/logger";
+
+// Multi-language, Idempotency, Validation, Filters, Metadata
 import { createI18nOptions, createI18nAsyncConfig, LanguageService } from "@vyhoang/microservice-clean/infrastructure/languages";
 import { RedisIdempotencyRepository, withIdempotency } from "@vyhoang/microservice-clean/infrastructure/idempotency";
-import { GrpcValidationPipe, ValidationSchema } from "@vyhoang/microservice-clean/infrastructure/validation";
+import { GrpcValidationPipe, ValidationSchema, TypedSchema } from "@vyhoang/microservice-clean/infrastructure/validation";
 import { GrpcBusinessExceptionFilter } from "@vyhoang/microservice-clean/infrastructure/filters";
 import { MetadataMapper } from "@vyhoang/microservice-clean/infrastructure/mapper";
 ```
@@ -81,8 +105,14 @@ import { MetadataMapper } from "@vyhoang/microservice-clean/infrastructure/mappe
 ---
 
 ## Modules & Usage Guide
+### 1. Messaging Architecture (`infrastructure/messaging`)
 
-### 1. RabbitMQ Messaging Architecture (`infrastructure/queue`)
+Unified messaging engine supporting **RabbitMQ** (Worker Queues & Direct Commands) and **Kafka** (High-throughput Event Streaming) as independent, enterprise-grade transports.
+
+> [!TIP]
+> **Tài liệu chuyên sâu từ A-Z:** Xem toàn bộ cẩm nang chi tiết từ lý thuyết, phân tích cấu hình từng file, so sánh hệ thống lớn (fintech, banking) đến checklist Production tại [docs/MESSAGING_ARCHITECTURE_GUIDE.md](docs/MESSAGING_ARCHITECTURE_GUIDE.md).
+
+#### A. RabbitMQ Messaging Engine
 
 High-reliability messaging engine implementing an enterprise **two-tier message safety net** with built-in **Alternate Exchange (AE)** for unrouted events and **Dead Letter Queue (DLQ)** retry topology.
 
@@ -136,8 +166,8 @@ When subscribing to events or handling commands, provide `queueName` and a `retr
 - **Retry Queue**: Automatically created as `<queueName>.retry` with `x-message-ttl`. After expiry, messages route back to `<queueName>` for re-execution.
 - **Dead Letter Queue**: After `maxRetries` attempts fail, messages are moved to the specified `deadLetterQueue` (or `<queueName>.dlq`) with header `x-event-bus-retry-count` preserved.
 
-#### Connection Ownership & Lifecycle
-Create one long-lived `RabbitMQConnection` per service process and inject it into your adapters. `RabbitMQEventBus` does not own the connection. The application bootstrap or module shutdown must close the shared connection after messaging adapters have drained:
+#### Connection Ownership & Lifecycle (RabbitMQ)
+Create one long-lived `RabbitMQConnection` per service process and inject it into `RabbitMQEventBus`:
 
 ```ts
 import {
@@ -145,7 +175,7 @@ import {
   RabbitMQEventBus,
   DEFAULT_ALTERNATE_EXCHANGE,
   DEFAULT_UNROUTED_EVENTS_QUEUE
-} from "@vyhoang/microservice-clean/infrastructure/queue";
+} from "@vyhoang/microservice-clean/infrastructure/messaging";
 
 const connection = new RabbitMQConnection({
   urls: [process.env.RABBITMQ_URL || "amqp://localhost:5672"],
@@ -158,11 +188,11 @@ const connection = new RabbitMQConnection({
   },
 });
 
-const eventBus = new RabbitMQEventBus(connection);
+const rabbitBus = new RabbitMQEventBus(connection);
 await connection.connect();
 
-// Publish event (preserves trace headers like traceparent for OpenTelemetry):
-await eventBus.publishEvent(
+// Publish fan-out event:
+await rabbitBus.publishEvent(
   "order.created.v1", 
   { orderId: '123', total: 500000 },
   {
@@ -170,8 +200,11 @@ await eventBus.publishEvent(
   }
 );
 
+// Send point-to-point command:
+await rabbitBus.sendCommand("payment.refund.q", { paymentId: "pay-123", amount: 100000 });
+
 // Subscribe to event with Retry Backoff & DLQ:
-await eventBus.subscribeEvent(
+await rabbitBus.subscribeEvent(
   "order.created.v1",
   async (payload, rawMessage, envelope) => {
     // Business logic
@@ -188,39 +221,234 @@ await eventBus.subscribeEvent(
 );
 
 // Graceful shutdown:
-await eventBus.close();
+await rabbitBus.close();
 await connection.close();
 ```
 
 ---
 
-### 2. Redis Cache & Distributed Lock (`infrastructure/cache`)
+#### B. Kafka Messaging Architecture
 
-Supports connection URL (`REDIS_URI` / `redis://...`) or granular host/port/credentials, automatic JSON serialization, atomic distributed locking, hashes, sets, and lists:
+Kafka is the **integration-event backbone** between services, built for event replay, long retention, per-partition ordering, and independent consumer groups.
 
 ```ts
-import { RedisService, BaseRedisService, getRedisClient } from "@vyhoang/microservice-clean/infrastructure/cache";
+import { KafkaConnection, KafkaEventBus } from "@vyhoang/microservice-clean/infrastructure/messaging";
+
+const kafka = new KafkaConnection({
+  clientId: process.env.KAFKA_CLIENT_ID || "order-service",
+  brokers: (process.env.KAFKA_BROKERS || "localhost:9092").split(","),
+  allowAutoTopicCreation: false,
+  // Native librdkafka controls. Idempotence is enabled by default by this package.
+  requestTimeoutMs: 30_000,
+  // Cluster & provisioning defaults (configurable via options or env vars)
+  defaultTopicReplication: 1,      // or via KAFKA_DEFAULT_REPLICATION_FACTOR
+  defaultMinInSyncReplicas: 1,     // or via KAFKA_DEFAULT_MIN_INSYNC_REPLICAS
+  defaultNumPartitions: 4,         // or via KAFKA_DEFAULT_NUM_PARTITIONS
+  producerConfig: {
+    "compression.codec": "zstd",  // or via KAFKA_PRODUCER_COMPRESSION
+    "linger.ms": 5,               // or via KAFKA_PRODUCER_LINGER_MS
+    "delivery.timeout.ms": 120_000,
+  },
+  librdkafkaConfig: {
+    "socket.keepalive.enable": true,
+  },
+  topics: [
+    { topic: "order.events",   numPartitions: 4, replicationFactor: 1 },
+    { topic: "payment.events", numPartitions: 4, replicationFactor: 1 },
+  ],
+});
+await kafka.connect();
+
+const kafkaBus = new KafkaEventBus(kafka, {
+  consumer: {
+    // Cooperative-sticky rebalance prevents stop-the-world cluster rebalances
+    partitionAssignmentStrategy: "cooperative-sticky",
+    maxPollIntervalMs: 300_000, // 5 mins heartbeat tolerance
+  }
+});
+```
+
+`topics` is convenient for local development. In production, provision both
+event topics and their `-dlq` topics through IaC, then omit `topics` here so
+the application identity does not require Kafka Admin/CreateTopics permission.
+The package uses native `librdkafka` configuration: pass cross-client settings
+via `librdkafkaConfig` and producer-only settings via `producerConfig`.
+For local-only DLQ creation, set `consumer: { dlq: { provision: true } }` on
+`KafkaEventBus`; production consumers expect their DLQ topic to exist already.
+
+#### C. Independent Messaging Usage Pattern
+
+When a service (e.g. Notification Service) consumes events from Kafka and dispatches background worker jobs to RabbitMQ, call both transports independently without artificial coupling:
+
+| Transport | Channel | Use Case |
+|---|---|---|
+| **Kafka (`KafkaEventBus`)** | Topics (`order.events`, `payment.events`) | Fan-out domain events, audit logs, event streaming |
+| **RabbitMQ (`RabbitMQEventBus`)** | Direct Queues (`email.q`, `payment.refund.q`) | Point-to-point jobs, async worker tasks with individual ACK/NACK |
+
+```ts
+import { 
+  KafkaConnection, 
+  KafkaEventBus, 
+  RabbitMQConnection, 
+  RabbitMQEventBus 
+} from "@vyhoang/microservice-clean/infrastructure/messaging";
+
+// 1. Initialize Kafka for Domain Events
+const kafka = new KafkaConnection({ clientId: "noti-service", brokers: ["localhost:9092"] });
+await kafka.connect();
+const kafkaBus = new KafkaEventBus(kafka);
+
+// 2. Initialize RabbitMQ for Worker Queues
+const rabbit = new RabbitMQConnection({ url: "amqp://localhost" });
+await rabbit.connect();
+const rabbitBus = new RabbitMQEventBus(rabbit);
+
+// Consume event from Kafka, then dispatch worker task to RabbitMQ
+await kafkaBus.subscribeEvent("order.created.v1", async (order: any) => {
+  await rabbitBus.sendCommand("email.dispatch.q", { to: order.customerEmail, template: "welcome" });
+});
+
+// Graceful shutdown
+await kafkaBus.close();
+await rabbitBus.close();
+await kafka.close();
+await rabbit.close();
+```
+
+#### Kafka Publish & Subscribe
+
+```ts
+// Producer-side (e.g. order outbox relay):
+await kafkaBus.publishEvent("order.created.v1", {
+  orderId: "ord-123",
+  aggregateId: "ord-123",   // <- partition key; events of same aggregate stay ordered
+  total: 500000,
+});
+
+// Consumer-side (e.g. notification service):
+await kafkaBus.subscribeEvent(
+  "order.status-changed.v1",
+  async (payload, rawMessage, envelope) => {
+    // payload.orderId, payload.status ...
+  },
+  {
+    queueName: "notification-order",       // consumer group id (durable offset)
+    partitionAssignmentStrategy: "cooperative-sticky", // default
+    maxPollIntervalMs: 300_000,              // 5 minutes
+    retry: { maxRetries: 3, retryDelayMs: 5000 },
+  }
+);
+
+// Graceful shutdown:
+await kafkaBus.close();
+await kafka.close();
+```
+
+#### Topic Naming Convention
+
+`eventName` → `topic` mapping is provided by a `KafkaTopicResolver`. The default
+resolver maps the first segment of the dotted event name to `<segment>.events`:
+
+| Event name | Topic |
+|------------|-------|
+| `order.created.v1` | `order.events` |
+| `order.status-changed.v1` | `order.events` |
+| `payment.failed.v1` | `payment.events` |
+| `email-verification.requested.v1` | `account.events` |
+
+Provide a custom resolver in `KafkaEventBusOptions.topics.resolveTopic` when you
+need finer-grained topics.
+
+#### Partition Key & Ordering
+
+The producer derives the partition key from `payload.aggregateId ?? payload.id`
+(or a custom `partitionKey` resolver). Events of the same aggregate land in the
+same partition → Kafka preserves their order per partition. Use this for event
+sourcing (e.g. replay all `order.created` of one order in order).
+
+#### Retry, Poison Pills & Dead-Letter (DLQ)
+
+The consumer commits only after a successful handler invocation.
+- **Poison Pills & Malformed Payloads**: If a message cannot be deserialized (e.g., malformed non-JSON data produced by an untyped producer), the consumer preserves the raw string payload along with error details and **immediately routes it to `<topic>-dlq`**, committing the offset to prevent partition blockage.
+- **Permanent Business Errors** (e.g. schema/validation failure): Immediately forwarded to `<topic>-dlq` and the offset is committed to keep the partition moving.
+- **Transient Infrastructure Errors** (e.g. database timeout, network glitch): Pauses the affected partition, seeks back to the failed offset, and retries after `retryDelayMs`. After exceeding `maxRetries`, the record is produced to `<topic>-dlq` and source offset is committed.
+
+#### Consumer Rebalance & Heartbeat Resilience
+- **Cooperative Sticky Strategy**: Consumer groups default to `cooperative-sticky` (incremental cooperative rebalance), preventing "stop-the-world" partition reassignments when consumers scale up/down.
+- **Configurable `max.poll.interval.ms`**: Defaults to 300,000ms (5 minutes) so long-running event processing batches won't trigger premature consumer group evictions.
+
+#### Replay / Backfill
+
+Kafka stores events within topic retention limits. To replay events:
+1. **Dedicated consumer group**: Start a new consumer group with `fromBeginning: true` (and bypass or clear the deduplication inbox):
+   ```ts
+   const syncBus = new KafkaEventBus(connection, {
+     consumer: { groupId: "backfill-group-v2", fromBeginning: true }
+   });
+   ```
+2. **Kafka CLI**: Reset offsets directly for an existing group:
+   ```bash
+   kafka-consumer-groups.sh --bootstrap-server localhost:9092 --group order-group --topic order.events --reset-offsets --to-earliest --execute
+   ```
+
+#### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `KAFKA_BROKERS` | `localhost:9092` | Comma-separated list of Kafka broker endpoints |
+| `KAFKA_CLIENT_ID` | Service client ID | Identifier for the Kafka client instance |
+| `KAFKA_DEFAULT_NUM_PARTITIONS` | `1` | Default partitions when auto-creating topics |
+| `KAFKA_DEFAULT_REPLICATION_FACTOR` | `1` | Default replication factor (e.g. 3 in production cluster) |
+| `KAFKA_DEFAULT_MIN_INSYNC_REPLICAS` | `1` | Default min.insync.replicas (e.g. 2 in production cluster) |
+| `KAFKA_PRODUCER_COMPRESSION` | `zstd` / `lz4` | Producer compression algorithm (`lz4`, `zstd`, `snappy`, `gzip`) |
+| `KAFKA_PRODUCER_LINGER_MS` | `5` | Micro-batch linger time in milliseconds for higher throughput |
+
+---
+
+
+
+### 2. Redis Cache & Distributed Lock (`infrastructure/cache`)
+
+Supports connection URL (`REDIS_URI` / `redis://...`) or granular host/port/credentials, automatic JSON serialization, atomic distributed locking, hashes, sets, and lists.
+
+> [!TIP]
+> **Dual-Signature Support**: `RedisService` supports both **clean direct parameters** and **object-based options** for 100% backward compatibility.
+
+```ts
+import { RedisService, BaseRedisService, createRedisClient } from "@vyhoang/microservice-clean/infrastructure/cache";
 
 // Initialize (automatically reads REDIS_URI or REDIS_HOST / REDIS_PORT / REDIS_PASSWORD from env)
 const redis = new RedisService();
 
-// Basic Key-Value (auto JSON.stringify & JSON.parse)
-await redis.set({ key: 'user:100', value: { id: 100, name: 'Alice' }, ttl: 3600 });
-const user = await redis.get<{ id: number; name: string }>({ key: 'user:100' });
+// --- 1. Natural Direct Arguments (Recommended) ---
+// Key-Value with auto JSON serialization & TTL in seconds:
+await redis.set('user:100', { id: 100, name: 'Alice' }, 3600);
+const user = await redis.get<{ id: number; name: string }>('user:100');
+await redis.del('user:100');
 
-// Safe Distributed Lock (uses SET NX EX and atomic Lua Script release)
-const acquired = await redis.acquireLock({ key: 'lock:order:123', ttlSeconds: 30, lockValue: 'worker-1' });
+// Safe Distributed Lock (SET NX EX + Atomic Lua Script Release):
+const acquired = await redis.acquireLock('lock:order:123', 30, 'worker-1');
 if (acquired) {
   try {
     // Process exclusive critical section...
   } finally {
-    await redis.releaseLock({ key: 'lock:order:123', lockValue: 'worker-1' });
+    await redis.releaseLock('lock:order:123', 'worker-1');
   }
 }
 
-// Hashes, Sets, Lists
-await redis.hset({ key: 'profile:1', data: { age: 25, role: 'admin' } });
-const profile = await redis.hgetall({ key: 'profile:1' });
+// Hashes, Lists, Sets:
+await redis.hset('profile:100', { age: 25, role: 'admin' });
+const profile = await redis.hgetall('profile:100');
+await redis.rpush('queue:tasks', { taskId: 'task-1' });
+const nextTask = await redis.lpop('queue:tasks');
+await redis.sadd('tags:post:1', 'typescript', 'microservices');
+const tags = await redis.smembers('tags:post:1');
+
+// --- 2. Legacy Object Syntax (Fully Backward Compatible) ---
+await redis.set({ key: 'user:100', value: { id: 100, name: 'Alice' }, ttl: 3600 });
+const legacyUser = await redis.get({ key: 'user:100' });
+await redis.acquireLock({ key: 'lock:order:123', ttlSeconds: 30, lockValue: 'worker-1' });
+await redis.releaseLock({ key: 'lock:order:123', lockValue: 'worker-1' });
 ```
 
 ---
@@ -297,29 +525,176 @@ await withIdempotency(
 
 ---
 
-### 5. gRPC Validation Pipe & Business Filter (`infrastructure/validation` & `infrastructure/filters`)
+### 5. Input Validation (`infrastructure/validation` & `core`)
 
-#### `GrpcValidationPipe`
-Validates payload data against schemas and throws standard `BusinessError`:
+Clean Architecture dictates that **Boundary / Structural Validation** belongs strictly to the **Inbound Infrastructure layer** (Controllers, Gateway handlers, Message consumers) *before* passing execution to Use Cases. This ensures Use Cases focus 100% on domain orchestration and business logic without defensive boilerplate checks.
+
+This package provides **two specialized validation approaches** tailored to your service architecture:
+
+---
+
+#### Approach A: Schema-Based Validation for gRPC Microservices (`GrpcValidationPipe`)
+> **Best for:** Internal gRPC Microservices, Protobuf contracts, high-throughput systems.  
+> **Key benefits:** Zero duplicate class definitions, runs on raw Protobuf payloads, ultra-fast plain JS execution, seamless integration with `GrpcBusinessExceptionFilter`.
+
+##### Supported Schema Rules (`FieldRule`)
+| Rule | Type | Description |
+| :--- | :--- | :--- |
+| `required` | `boolean` | Field must not be `undefined`, `null`, or empty string `""` |
+| `type` | `'string' | 'number' | 'boolean' | 'array' | 'object'` | Validates primitive type |
+| `trim` | `boolean` | Trims whitespace before checking emptiness (strings) |
+| `minLength` / `maxLength` | `number` | String length boundaries |
+| `pattern` | `RegExp` | Regular expression validation |
+| `enum` | `(string | number)[]` | Whitelist allowed values |
+| `integer` | `boolean` | Requires safe integer (`Number.isSafeInteger`) |
+| `positive` | `boolean` | Requires numeric value > 0 |
+| `nonNegative` | `boolean` | Requires numeric value >= 0 |
+| `min` / `max` | `number` | Numeric value boundaries |
+| `minItems` / `maxItems` | `number` | Array length boundaries |
+| `uniqueBy` | `string` | Rejects duplicate property values in array items (e.g. `'variantId'`) |
+| `itemSchema` | `ValidationSchema` | Validates every object element inside an array |
+| `fields` | `ValidationSchema` | Validates nested single object properties |
+| `custom` | `(value, root) => string | boolean` | Custom function (return string for custom error message) |
+
+##### Usage Example (gRPC Service)
+
+> [!TIP]
+> **Type Safety with `TypedSchema<T>`:**
+> Using `TypedSchema<MyDTO>` bridges compile-time safety and runtime validation without leaking framework code into your Application layer:
+> - **Auto-complete**: IDE automatically suggests valid field names from your DTO.
+> - **Typo Prevention**: Mistyped property names trigger immediate compile errors.
+> - **Refactor-Safe**: Modifying a DTO field immediately alerts you if the schema is out of sync.
 
 ```ts
-import { GrpcValidationPipe, ValidationSchema } from '@vyhoang/microservice-clean/infrastructure/validation';
+// 1. Define method validation schemas using TypedSchema<T> (tied to Application DTO):
+import { TypedSchema, ValidationSchema } from '@vyhoang/microservice-clean/infrastructure/validation';
+import { InventoryOperationInputDTO } from '@product/application/dto';
 
-const schemas: Record<string, ValidationSchema> = {
-  CreateAccount: {
-    email: { required: true, type: 'string', pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/ },
-    age: { required: false, type: 'number', min: 18 }
+// TypedSchema<T> provides full auto-completion and prevents typo mismatches with your UseCase DTO:
+export const inventoryOperationSchema: TypedSchema<InventoryOperationInputDTO> = {
+  orderId: { required: true, type: 'string', trim: true, minLength: 1, message: 'orderId is required' },
+  items: {
+    required: true,
+    type: 'array',
+    minItems: 1,
+    uniqueBy: 'variantId', // Rejects duplicate variantId within the request
+    message: 'At least one item is required',
+    itemSchema: {
+      variantId: { required: true, type: 'string', minLength: 1, message: 'variantId is required' },
+      quantity: { required: true, type: 'number', integer: true, positive: true, message: 'quantity must be a positive integer' }
+    }
   }
 };
 
-export class AccountGrpcValidationPipe extends GrpcValidationPipe {
+export const grpcMethodSchemas: Record<string, ValidationSchema> = {
+  confirmInventory: inventoryOperationSchema,
+  reserveInventory: inventoryOperationSchema,
+  releaseInventory: inventoryOperationSchema
+};
+```
+
+```ts
+// 2. Subclass or inject GrpcValidationPipe:
+import { Injectable } from '@nestjs/common';
+import { GrpcValidationPipe as BaseGrpcValidationPipe } from '@vyhoang/microservice-clean/infrastructure/validation';
+import { grpcMethodSchemas } from './grpc.validator';
+
+@Injectable()
+export class GrpcValidationPipe extends BaseGrpcValidationPipe {
   constructor() {
-    super(schemas);
+    super(grpcMethodSchemas);
   }
 }
 ```
 
-#### `GrpcBusinessExceptionFilter`
+```ts
+// 3. Validate at the Inbound gRPC Controller before invoking the UseCase:
+@UseFilters(new GrpcBusinessExceptionFilter(mapToGrpcStatus))
+@Controller()
+export class InventoryGrpcController {
+  constructor(
+    private readonly confirmInventoryUseCase: ConfirmInventoryUseCase,
+    private readonly validationPipe: GrpcValidationPipe
+  ) {}
+
+  @GrpcMethod('InventoryService', 'ConfirmInventory')
+  async confirmInventory(data: InventoryRequest): Promise<InventoryResponse> {
+    // Fail-fast at the boundary. Throws BusinessError(4000) mapped to status.INVALID_ARGUMENT:
+    await this.validationPipe.validate('confirmInventory', data);
+
+    // Map to Application DTO and invoke clean Use Case:
+    const dto = InventoryGrpcMapper.toOperationDTO(data);
+    return InventoryGrpcMapper.toResponse(await this.confirmInventoryUseCase.execute(dto));
+  }
+}
+```
+
+---
+
+#### Approach B: Class-Based Validation for HTTP REST APIs / API Gateways (`validateDto`)
+> **Best for:** HTTP REST Controllers, API Gateways, Swagger/OpenAPI documentation, or Message Consumers using `class-validator`.  
+> **Key benefits:** Seamless integration with NestJS Swagger, auto-casts types via `class-transformer`, strict whitelist protection.
+
+##### Clean Architecture Note
+Execute `validateDto()` at the **Inbound Controller / Gateway boundary**, NEVER inside Use Cases. Use Cases should receive clean, strongly-typed interfaces or domain value objects.
+
+##### Usage Example (HTTP Controller / Gateway)
+
+```ts
+// 1. Define DTO class with class-validator decorators:
+import { IsString, IsEmail, MinLength, IsOptional, IsInt, Min } from 'class-validator';
+
+export class CreateAccountDto {
+  @IsEmail({}, { message: 'Invalid email address' })
+  email!: string;
+
+  @IsString()
+  @MinLength(6, { message: 'Password must have at least 6 characters' })
+  password!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(18, { message: 'Age must be 18 or older' })
+  age?: number;
+}
+```
+
+```ts
+// 2. Validate at HTTP Controller / Consumer boundary before calling UseCase:
+import { Controller, Post, Body } from '@nestjs/common';
+import { validateDto } from '@vyhoang/microservice-clean/infrastructure/validation';
+
+@Controller('accounts')
+export class AccountController {
+  constructor(private readonly createAccountUseCase: CreateAccountUseCase) {}
+
+  @Post()
+  async createAccount(@Body() rawPayload: unknown) {
+    // Validates, whitelists, and transforms into typed instance (throws BadRequestException by default):
+    const dto = await validateDto(CreateAccountDto, rawPayload);
+
+    // Pass validated DTO to Use Case:
+    return this.createAccountUseCase.execute(dto);
+  }
+}
+```
+
+##### Custom Error Factory (for gRPC or Custom Exceptions)
+You can customize the error thrown by `validateDto` via the `errorFactory` option:
+
+```ts
+import { validateDto } from '@vyhoang/microservice-clean/infrastructure/validation';
+import { BusinessError } from '@vyhoang/microservice-clean/core';
+
+const dto = await validateDto(CreateAccountDto, rawPayload, {
+  errorFactory: (errors, className) => new BusinessError(4000, `Validation failed: ${className}`, { errors })
+});
+```
+
+---
+
+### 6. gRPC Business Exception Filter (`infrastructure/filters`)
+
 Translates `BusinessError` into standard gRPC status codes and attaches `Metadata ('error-code')`:
 
 ```ts
@@ -327,14 +702,15 @@ import { GrpcBusinessExceptionFilter } from '@vyhoang/microservice-clean/infrast
 
 // Optional custom status code mapper:
 app.useGlobalFilters(new GrpcBusinessExceptionFilter((code) => {
-  if (code === 404) return 5; // status.NOT_FOUND
+  if (code === 4000) return 3; // status.INVALID_ARGUMENT
+  if (code === 4040) return 5; // status.NOT_FOUND
   return 13; // status.INTERNAL
 }));
 ```
 
 ---
 
-### 6. Distributed Request Context & Metadata (`core` & `infrastructure/mapper`)
+### 7. Distributed Request Context & Metadata (`core` & `infrastructure/mapper`)
 
 Bi-directional conversion between gRPC `Metadata` and `RequestContext`:
 
@@ -352,7 +728,7 @@ const outboundMetadata = MetadataMapper.fromRequestContext(context);
 
 ---
 
-### 7. Core Errors (`core`)
+### 8. Core Errors (`core`)
 
 Standard domain errors extending `BusinessError`:
 
@@ -373,120 +749,146 @@ throw new DuplicateError('Email already registered', 4090);
 
 ---
 
-### 8. Elasticsearch Logging & Structured Pino (`infrastructure/logger`)
+### 9. Structured & Colorized Logger (`infrastructure/logger`)
 
-High-throughput, buffered stream adapter routing Pino structured JSON logs directly into Elasticsearch clusters with standard ECS `@timestamp` compliance and process-crash resilience:
+High-performance, zero-dependency logging engine designed specifically for microservices. Fully implements domain `ILogger` port with zero external runtime dependencies on Pino:
 
-- **High-Throughput Batching**: Uses `@elastic/elasticsearch` Bulk helper with configurable `flushBytes` and `flushInterval`.
-- **Dynamic Index Partitioning**: Supports date interpolation patterns (e.g. `pino-%{DATE}`) or custom index naming resolver functions.
-- **ECS & Kibana Compatibility**: Guarantees standard ISO-8601 `@timestamp` field so logs can be queried immediately in Kibana Discover without extra index pattern adjustments.
-- **Fail-Safe Stream Handling**: Catches unhandled stream errors to prevent Elasticsearch connection drops from crashing the Node.js application process.
-- **Structured Metadata Preservation**: `PinoLogger` correctly formats metadata parameters so fields (`userId`, `orderId`, `traceId`, stack traces) are indexed as top-level JSON attributes in Elasticsearch.
+- **Beautiful Development Output**: In non-production environments (`NODE_ENV !== 'production'`), logs are colorized, formatted with millisecond timestamps, service name tags, correlation/trace IDs, and colorized JSON inspector.
+- **Production Structured JSON**: In production (`NODE_ENV === 'production'`), emits high-throughput, NDJSON-compliant single-line JSON records.
+- **Contextual Tracing**: Built-in `.child({ correlationId, userId })` method scopes request or transaction metadata down asynchronous call chains.
+- **Optional Direct Elasticsearch Streaming**: Pass `elastic: { node: '...' }` to ship logs directly to Elasticsearch in the background with automatic batching, retry resilience, and ECS `@timestamp` compliance.
+- **Pino-Compatible**: Can wrap an existing external Pino instance via `new PinoLogger(externalPinoInstance)` if your service already has a custom Pino pipeline.
 
-#### Basic Setup (Pino + Elasticsearch Multi-stream)
+#### Basic Usage (`createLogger`)
 
 ```ts
-import pino from 'pino';
-import { pinoElastic } from '@vyhoang/microservice-clean/infrastructure/logger';
+import { createLogger, PinoLogger, pinoElastic } from '@vyhoang/microservice-clean/infrastructure/logger';
+import { ILogger } from '@vyhoang/microservice-clean/core';
 
-export function createElasticPinoLogger() {
-  const esStream = pinoElastic({
-    node: process.env.ELASTICSEARCH_NODE || 'http://localhost:9200',
+// 1. Initialize logger for your microservice:
+export const logger: ILogger = createLogger({
+  serviceName: 'order-service',
+  level: 'info',
+  // Optional background Elasticsearch log shipping:
+  elastic: process.env.ELASTICSEARCH_NODE ? {
+    node: process.env.ELASTICSEARCH_NODE,
     auth: {
       username: process.env.ELASTIC_USER || 'elastic',
       password: process.env.ELASTIC_PASSWORD || 'changeme'
     },
-    index: 'microservice-logs-%{DATE}', // Daily rotating index: microservice-logs-2026-10-07
-    flushBytes: 1000,                  // Flush every 1000 bytes
-    flushInterval: 5000,               // Or flush every 5000ms
-    rejectUnauthorized: false
-  });
+    index: 'order-service-logs-%{DATE}', // Daily rotating index: order-service-logs-2026-10-16
+    flushBytes: 1000,
+    flushInterval: 5000
+  } : undefined
+});
 
-  // Optional lifecycle hooks:
-  esStream.on('insert', (stats) => console.log('[ES Logger] Flushed bulk logs:', stats.total));
-  esStream.on('error', (err) => console.error('[ES Logger] Indexing error:', err));
-
-  // Multi-stream: Write simultaneously to stdout (for container logs) and Elasticsearch:
-  return pino(
-    { level: process.env.LOG_LEVEL || 'info' },
-    pino.multistream([
-      { stream: process.stdout },
-      { stream: esStream }
-    ])
-  );
-}
-```
-
-#### Clean Architecture Adapter (`PinoLogger` / `ILogger`)
-
-Wrap Pino with `PinoLogger` to satisfy the domain `ILogger` port without leaking Pino details into application use cases:
-
-```ts
-import { PinoLogger } from '@vyhoang/microservice-clean/infrastructure/logger';
-import { ILogger } from '@vyhoang/microservice-clean/core';
-
-const rawPino = createElasticPinoLogger();
-const logger: ILogger = new PinoLogger(rawPino);
-
-// Metadata fields are mapped as top-level JSON attributes in Elasticsearch:
+// 2. Structured log messages with arbitrary metadata:
 logger.info('Order checkout initialized', { 
   orderId: 'ord-999', 
   userId: 'usr-123', 
   total: 450000 
 });
 
-// Supports Error objects with auto-extracted message and stack trace:
+// 3. Error logging with automatic stack trace extraction:
 logger.error(new Error('Payment gateway timeout'), { 
   orderId: 'ord-999', 
   provider: 'VNPAY' 
 });
+
+// 4. Scoped Child Logger for Request / Trace Tracking:
+const reqLogger = (logger as PinoLogger).child({
+  correlationId: 'req-4bf92f3577b3',
+  userId: 'usr-123'
+});
+reqLogger.info('Processing payment verification');
+// Dev Terminal output:
+// 10:56:45.123 [INFO ] [order-service] (trace:req-4bf9) Processing payment verification
 ```
 
 ---
 
-### 9. DTO Validation Helper (`core / validateDto`)
+### 10. Elasticsearch Search & Document Service (`infrastructure/elasticsearch`)
 
-A standalone validation helper that transforms plain request dictionaries or event payloads into strongly-typed class instances and enforces validation rules:
+Enterprise document indexing, full-text searching, and management client implementing the domain `IElasticSearchClient` interface:
 
 > [!NOTE]
-> **Required Peer Dependencies:**
-> To use `validateDto`, you must install `class-transformer`, `class-validator`, and `@nestjs/common`:
-> ```bash
-> npm install class-transformer class-validator @nestjs/common reflect-metadata
-> ```
+> **Peer Dependency**: Requires `@elastic/elasticsearch` (`npm install @elastic/elasticsearch`).
 
-- **Type Transformation**: Converts plain raw JSON objects into class instances via `class-transformer` (`plainToInstance`).
-- **Strict Whitelist Protection**: Validates with `{ whitelist: true, forbidNonWhitelisted: true }` through `class-validator` (`validateOrReject`), strictly blocking unexpected or malicious fields.
-- **NestJS Exception Mapping**: On validation failure, automatically throws standard NestJS `BadRequestException` containing detailed field error constraints.
+- **Clean Architecture Compliant**: Encapsulates Elasticsearch client specifics within the infrastructure layer; Use Cases interact strictly with `IElasticSearchClient`.
+- **Automatic Fallback Configuration**: Reads `ELASTICSEARCH_NODE` / `ELASTICSEARCH_NODES` and credentials directly from environment variables if not provided explicitly.
+- **Type-Safe Search & Retrieval**: Generics-enabled `search<T>()` and `get<T>()` return typed document payloads without manual casting.
+- **Fail-Safe Missing Document Handling**: `get()` and `delete()` return `null` / `false` when a document does not exist instead of throwing 404 HTTP errors.
 
 #### Usage Example
 
 ```ts
-import { IsString, IsEmail, MinLength, IsOptional, IsInt, Min } from 'class-validator';
-import { validateDto } from '@vyhoang/microservice-clean/core';
+import { 
+  ElasticSearchService, 
+  createElasticClient, 
+  getSharedElasticClient 
+} from '@vyhoang/microservice-clean/infrastructure/elasticsearch';
+import { IElasticSearchClient } from '@vyhoang/microservice-clean/core';
 
-// 1. Define your typed DTO class with class-validator decorators:
-export class CreateAccountDto {
-  @IsEmail({}, { message: 'Invalid email address' })
-  email!: string;
+// 1. Initialize service (reads ELASTICSEARCH_NODE from env or accepts config options):
+const esService: IElasticSearchClient = new ElasticSearchService({
+  node: process.env.ELASTICSEARCH_NODE || 'http://localhost:9200',
+  auth: {
+    username: process.env.ELASTIC_USER || 'elastic',
+    password: process.env.ELASTIC_PASSWORD || 'changeme'
+  }
+});
 
-  @IsString()
-  @MinLength(6, { message: 'Password must have at least 6 characters' })
-  password!: string;
+// Check cluster health:
+const isAlive = await esService.ping();
 
-  @IsOptional()
-  @IsInt()
-  @Min(18, { message: 'Age must be 18 or older' })
-  age?: number;
+// 2. Index / Overwrite a Document:
+interface ProductDocument {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
 }
 
-// 2. Validate incoming payloads inside usecases, controller handlers, or event consumers:
-async function handleCreateAccount(rawPayload: unknown) {
-  // Returns strongly-typed instance CreateAccountDto:
-  const dto = await validateDto(CreateAccountDto, rawPayload);
-  
-  console.log(dto.email, dto.password);
-}
+await esService.index<ProductDocument>({
+  index: 'products',
+  id: 'prod-100',
+  document: {
+    id: 'prod-100',
+    name: 'Wireless Mechanical Keyboard',
+    category: 'electronics',
+    price: 1500000
+  }
+});
+
+// 3. Retrieve a Document by ID (returns null if not found):
+const product = await esService.get<ProductDocument>({
+  index: 'products',
+  id: 'prod-100'
+});
+
+// 4. Search Documents:
+const results = await esService.search<ProductDocument>({
+  index: 'products',
+  query: {
+    match: { category: 'electronics' }
+  },
+  size: 10,
+  from: 0
+});
+
+// 5. Partial Update:
+await esService.update<ProductDocument>({
+  index: 'products',
+  id: 'prod-100',
+  doc: { price: 1350000 }
+});
+
+// 6. Count and Delete:
+const totalCount = await esService.count({
+  index: 'products',
+  query: { match_all: {} }
+});
+const deleted = await esService.delete({ index: 'products', id: 'prod-100' });
 ```
 
 ---
@@ -506,3 +908,4 @@ npm run build
 ## License
 
 ISC
+

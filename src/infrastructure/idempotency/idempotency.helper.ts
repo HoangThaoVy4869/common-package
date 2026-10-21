@@ -1,4 +1,4 @@
-import { IIdempotencyRepository } from '../../core/interfaces/IIdempotencyRepository';
+import { IIdempotencyRepository } from '@core/interfaces/IIdempotencyRepository';
 
 export interface WithIdempotencyOptions<T> {
     key: string;

@@ -1,16 +1,23 @@
-import { IMessageBus } from '../../core/interfaces';
-import { RabbitMQConnection } from './RabbitMQConnection';
-import { InMemoryMessageInbox } from './rabbitmq/in-memory-message.inbox';
-import { RabbitMQConsumer } from './rabbitmq/rabbitmq.consumer';
-import { createEnvelope, publishEnvelope, sendEnvelope } from './rabbitmq/rabbitmq.message';
-import { MessageHandler, MessageInbox, PublishOptions, RabbitMQEventBusOptions, SubscriptionOptions } from './rabbitmq/rabbitmq.types';
+import { IMessageBus } from '@core/interfaces';
+import type {
+    MessageHandler,
+    PublishOptions,
+    SubscriptionOptions
+} from '@messaging-common';
+import { RabbitMQConnection } from '@rabbitmq/RabbitMQConnection';
+import { RabbitMQConsumer } from '@rabbitmq/rabbitmq.consumer';
+import { createEnvelope, publishEnvelope, sendEnvelope } from '@rabbitmq/rabbitmq.codec';
+import type { RabbitMQEventBusOptions } from '@rabbitmq/rabbitmq.types';
 
-export * from './RabbitMQConnection';
-export * from './rabbitmq/rabbitmq.types';
-export * from './rabbitmq/in-memory-message.inbox';
 
+/**
+ * RabbitMQEventBus
+ *
+ * Implements `IMessageBus` (both `IEventBus` and `ICommandBus`) using RabbitMQ:
+ * - publishEvent / subscribeEvent → Fanout Exchange with unrouted Alternate Exchange safety net
+ * - sendCommand / handleCommand   → Direct Queues with retry loop and DLQ topology
+ */
 export class RabbitMQEventBus implements IMessageBus {
-    private readonly inbox: MessageInbox;
     private readonly drainTimeoutMs: number;
     private readonly consumers: RabbitMQConsumer[] = [];
     private closed = false;
@@ -19,7 +26,6 @@ export class RabbitMQEventBus implements IMessageBus {
         readonly connection: RabbitMQConnection,
         options: RabbitMQEventBusOptions = {}
     ) {
-        this.inbox = options.inbox ?? new InMemoryMessageInbox();
         this.drainTimeoutMs = options.drainTimeoutMs ?? 30_000;
     }
 
@@ -54,7 +60,7 @@ export class RabbitMQEventBus implements IMessageBus {
 
     private async startConsumer(kind: 'event' | 'command', name: string, handler: MessageHandler, options: SubscriptionOptions): Promise<void> {
         this.requireReady();
-        const consumer = new RabbitMQConsumer(this.connection, this.inbox, kind, name, handler, options, this.consumers.length + 1);
+        const consumer = new RabbitMQConsumer(this.connection, kind, name, handler, options, this.consumers.length + 1);
         await consumer.start();
         this.consumers.push(consumer);
     }

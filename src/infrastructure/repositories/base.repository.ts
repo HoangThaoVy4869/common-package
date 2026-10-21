@@ -11,7 +11,7 @@ export abstract class BaseRepository<TDomain, TPersistence> {
     protected constructor(
         protected readonly model: Model<TPersistence>,
         protected readonly mapper: IRepositoryMapper<TDomain, TPersistence>
-    ) {}
+    ) { }
 
     // DOMAIN DRIVEN - DOMAIN FACING QUERY
     async findById(id: string): Promise<TDomain | null> {
@@ -38,7 +38,7 @@ export abstract class BaseRepository<TDomain, TPersistence> {
 
         const updated = await this.model
             .findOneAndUpdate(filter, { $set: updateData } as UpdateQuery<TPersistence>, {
-                new: true,
+                returnDocument: 'after',
                 upsert: false
             })
             .lean<TPersistence>()
@@ -57,7 +57,7 @@ export abstract class BaseRepository<TDomain, TPersistence> {
 
         await this.model
             .findOneAndUpdate(this.mapper.getIdentityFilter(entity), { $set: persistence } as UpdateQuery<TPersistence>, {
-                new: true,
+                returnDocument: 'after',
                 upsert: true
             })
             .lean<TPersistence>()
@@ -99,7 +99,7 @@ export abstract class BaseRepository<TDomain, TPersistence> {
 
     async updateOneByFilter(filter: QueryFilter<TPersistence>, fields: Partial<TPersistence>): Promise<TDomain | null> {
         const updated = await this.model
-            .findOneAndUpdate(filter, { $set: fields } as UpdateQuery<TPersistence>, { new: true })
+            .findOneAndUpdate(filter, { $set: fields } as UpdateQuery<TPersistence>, { returnDocument: 'after' })
             .lean<TPersistence>()
             .exec();
 
