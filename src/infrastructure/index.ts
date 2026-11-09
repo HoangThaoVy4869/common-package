@@ -7,3 +7,4 @@ export * from './filters';
 export * from './languages';
 export * from './idempotency';
 export * from './elasticsearch';
+export * from './outbox';

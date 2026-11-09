@@ -1,23 +1,25 @@
 import { IMessageBus } from '@core/interfaces';
 import type {
     MessageHandler,
-    PublishOptions,
-    SubscriptionOptions
+    PublishOptions
 } from '@messaging-common';
 import { RabbitMQConnection } from '@rabbitmq/RabbitMQConnection';
 import { RabbitMQConsumer } from '@rabbitmq/rabbitmq.consumer';
 import { createEnvelope, publishEnvelope, sendEnvelope } from '@rabbitmq/rabbitmq.codec';
-import type { RabbitMQEventBusOptions } from '@rabbitmq/rabbitmq.types';
-
+import type {
+    IRabbitMQEventBus,
+    RabbitMQEventBusOptions,
+    RabbitMQSubscriptionOptions
+} from '@rabbitmq/rabbitmq.types';
 
 /**
  * RabbitMQEventBus
  *
- * Implements `IMessageBus` (both `IEventBus` and `ICommandBus`) using RabbitMQ:
+ * Implements `IRabbitMQEventBus` (both `IEventBus` and `ICommandBus`) using RabbitMQ:
  * - publishEvent / subscribeEvent → Fanout Exchange with unrouted Alternate Exchange safety net
  * - sendCommand / handleCommand   → Direct Queues with retry loop and DLQ topology
  */
-export class RabbitMQEventBus implements IMessageBus {
+export class RabbitMQEventBus implements IRabbitMQEventBus, IMessageBus {
     private readonly drainTimeoutMs: number;
     private readonly consumers: RabbitMQConsumer[] = [];
     private closed = false;
@@ -38,6 +40,10 @@ export class RabbitMQEventBus implements IMessageBus {
         });
     }
 
+    async subscribeEvent<T>(eventName: string, handler: MessageHandler<T>, options: RabbitMQSubscriptionOptions = {}): Promise<void> {
+        await this.startConsumer('event', eventName, handler as MessageHandler, options);
+    }
+
     async sendCommand<T>(queueName: string, payload: T, options: PublishOptions = {}): Promise<void> {
         this.requireReady();
         await this.connection.declareQueue(queueName);
@@ -47,18 +53,14 @@ export class RabbitMQEventBus implements IMessageBus {
         });
     }
 
-    async subscribeEvent<T>(eventName: string, handler: MessageHandler<T>, options: SubscriptionOptions = {}): Promise<void> {
-        await this.startConsumer('event', eventName, handler as MessageHandler, options);
-    }
-
-    async handleCommand<T>(queueName: string, handler: MessageHandler<T>, options: SubscriptionOptions = {}): Promise<void> {
+    async handleCommand<T>(queueName: string, handler: MessageHandler<T>, options: RabbitMQSubscriptionOptions = {}): Promise<void> {
         await this.startConsumer('command', queueName, handler as MessageHandler, {
             ...options,
             queueName
         });
     }
 
-    private async startConsumer(kind: 'event' | 'command', name: string, handler: MessageHandler, options: SubscriptionOptions): Promise<void> {
+    private async startConsumer(kind: 'event' | 'command', name: string, handler: MessageHandler, options: RabbitMQSubscriptionOptions): Promise<void> {
         this.requireReady();
         const consumer = new RabbitMQConsumer(this.connection, kind, name, handler, options, this.consumers.length + 1);
         await consumer.start();

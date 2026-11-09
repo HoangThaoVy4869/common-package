@@ -58,6 +58,11 @@
       "require": "./dist/infrastructure/repositories/index.js",
       "default": "./dist/infrastructure/repositories/index.js"
     },
+    "./infrastructure/outbox": {
+      "types": "./dist/infrastructure/outbox/index.d.ts",
+      "require": "./dist/infrastructure/outbox/index.js",
+      "default": "./dist/infrastructure/outbox/index.js"
+    },
     "./package.json": "./package.json",
     "./infrastructure/messaging/rabbitmq": {
       "types": "./dist/infrastructure/messaging/rabbitmq/index.d.ts",
@@ -104,6 +109,9 @@
       ],
       "infrastructure/repositories": [
         "dist/infrastructure/repositories/index.d.ts"
+      ],
+      "infrastructure/outbox": [
+        "dist/infrastructure/outbox/index.d.ts"
       ]
     }
   },

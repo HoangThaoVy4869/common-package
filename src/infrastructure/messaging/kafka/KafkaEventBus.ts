@@ -1,17 +1,25 @@
 /**
  * KafkaEventBus
  *
- * Implements `IEventBus` on top of Kafka for integration events:
+ * Implements `IKafkaEventBus` on top of Kafka for integration events:
  *  - publishEvent / subscribeEvent → Kafka topics
  *  - publishBatch                  → Batch publication
  */
 
 import { IEventBus } from '@core/interfaces';
-import type { MessageHandler, PublishOptions, SubscriptionOptions } from '@messaging-common';
+import type { MessageHandler, PublishOptions } from '@messaging-common';
 import { KafkaConnection } from '@kafka/KafkaConnection';
 import { KafkaConsumer } from '@kafka/KafkaConsumer';
 import { KafkaProducer } from '@kafka/KafkaProducer';
-import type { KafkaBatchItem, KafkaConsumerGroupOptions, KafkaConsumerHandle, KafkaEventBusOptions, KafkaTopicResolver } from '@kafka/kafka.types';
+import type {
+    IKafkaEventBus,
+    KafkaBatchItem,
+    KafkaConsumerGroupOptions,
+    KafkaConsumerHandle,
+    KafkaEventBusOptions,
+    KafkaSubscriptionOptions,
+    KafkaTopicResolver
+} from '@kafka/kafka.types';
 
 const DEFAULT_TOPIC_RESOLVER: KafkaTopicResolver = {
     resolveTopic(eventName: string): string {
@@ -20,7 +28,7 @@ const DEFAULT_TOPIC_RESOLVER: KafkaTopicResolver = {
     }
 };
 
-export class KafkaEventBus implements IEventBus {
+export class KafkaEventBus implements IKafkaEventBus, IEventBus {
     readonly connection: KafkaConnection;
     readonly producer: KafkaProducer;
     private readonly drainTimeoutMs: number;
@@ -31,9 +39,13 @@ export class KafkaEventBus implements IEventBus {
 
     constructor(connection: KafkaConnection, options: KafkaEventBusOptions = {}) {
         this.connection = connection;
-        this.producer = new KafkaProducer(connection, options.topics?.resolveTopic ? { resolveTopic: options.topics.resolveTopic } : DEFAULT_TOPIC_RESOLVER, {
-            partitionKey: (eventName, payload) => resolvePartitionKey(eventName, payload)
-        });
+        this.producer = new KafkaProducer(
+            connection,
+            options.topics?.resolveTopic ? { resolveTopic: options.topics.resolveTopic } : DEFAULT_TOPIC_RESOLVER,
+            {
+                partitionKey: (eventName, payload) => resolvePartitionKey(eventName, payload)
+            }
+        );
         this.drainTimeoutMs = options.drainTimeoutMs ?? 30_000;
         this.consumerOptions = options.consumer ?? {};
         this.topicResolver = options.topics?.resolveTopic ? { resolveTopic: options.topics.resolveTopic } : DEFAULT_TOPIC_RESOLVER;
@@ -51,17 +63,32 @@ export class KafkaEventBus implements IEventBus {
         await this.producer.publish(eventName, payload, options);
     }
 
-    async subscribeEvent<T>(eventName: string, handler: MessageHandler<T>, options: SubscriptionOptions = {}): Promise<void> {
+    async subscribeEvent<T>(
+        eventName: string,
+        handler: MessageHandler<T>,
+        options: KafkaSubscriptionOptions = {}
+    ): Promise<void> {
         const topic = this.topicResolver.resolveTopic(eventName);
+        const resolvedGroupId = options.groupId ?? (this.consumerOptions.groupId || undefined);
+
         const consumerOptions: KafkaConsumerGroupOptions = {
             ...this.consumerOptions,
-            groupId: options.queueName ?? (this.consumerOptions.groupId || undefined),
+            groupId: resolvedGroupId,
+            fromBeginning: options.fromBeginning ?? this.consumerOptions.fromBeginning,
             maxRetries: options.retry?.maxRetries ?? this.consumerOptions.maxRetries ?? 3,
             retryDelayMs: options.retry?.retryDelayMs ?? this.consumerOptions.retryDelayMs ?? 5_000,
-            consumerConfig: this.consumerOptions.consumerConfig
+            consumerConfig: options.consumerConfig ?? this.consumerOptions.consumerConfig
         };
 
-        const consumer = new KafkaConsumer(this.connection, 'event', eventName, handler, topic, consumerOptions, this.consumers.length + 1);
+        const consumer = new KafkaConsumer(
+            this.connection,
+            'event',
+            eventName,
+            handler,
+            topic,
+            consumerOptions,
+            this.consumers.length + 1
+        );
         await consumer.start();
         this.consumers.push(consumer);
     }

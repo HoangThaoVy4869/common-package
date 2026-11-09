@@ -9,18 +9,36 @@ export type BusMessageHandler<T = unknown, M = unknown, E = unknown> = (
 ) => Promise<void> | void;
 
 /**
+ * Event Publisher (Outbound):
+ * Publishes/broadcasts domain or integration events.
+ */
+export interface IEventPublisher {
+    publishEvent<T = unknown>(eventName: string, payload: T, options?: unknown): Promise<void>;
+}
+
+/**
+ * Event Subscriber (Inbound):
+ * Subscribes to domain or integration events.
+ */
+export interface IEventSubscriber<TOptions = any> {
+    subscribeEvent<T = unknown>(
+        eventName: string,
+        handler: BusMessageHandler<T, any, any>,
+        options?: TOptions
+    ): Promise<void>;
+}
+
+/**
  * Event Bus (Pub / Sub):
  * Broadcasts domain/integration events to multiple subscribers (1-to-Many).
  * Implemented by: KafkaEventBus, RabbitMQEventBus.
  */
-export interface IEventBus {
-    /** Publish a fan-out event. */
+export interface IEventBus<TOptions = any> extends IEventPublisher, IEventSubscriber<TOptions> {
     publishEvent<T = unknown>(eventName: string, payload: T, options?: unknown): Promise<void>;
-    /** Subscribe to a fan-out event. */
     subscribeEvent<T = unknown>(
         eventName: string,
         handler: BusMessageHandler<T, any, any>,
-        options?: unknown
+        options?: TOptions
     ): Promise<void>;
 }
 
@@ -29,14 +47,12 @@ export interface IEventBus {
  * Dispatches point-to-point commands to a single worker queue (1-to-1).
  * Implemented by: RabbitMQEventBus.
  */
-export interface ICommandBus {
-    /** Send a point-to-point command to a target queue. */
+export interface ICommandBus<TOptions = any> {
     sendCommand<T = unknown>(queueName: string, payload: T, options?: unknown): Promise<void>;
-    /** Register a handler for a point-to-point command queue. */
     handleCommand<T = unknown>(
         queueName: string,
         handler: BusMessageHandler<T, any, any>,
-        options?: unknown
+        options?: TOptions
     ): Promise<void>;
 }
 
@@ -45,6 +61,6 @@ export interface ICommandBus {
  * Combines fan-out events and point-to-point commands.
  * Implemented by brokers supporting both paradigms (RabbitMQEventBus).
  */
-export interface IMessageBus extends IEventBus, ICommandBus { }
+export interface IMessageBus<TEventOptions = any, TCmdOptions = any> extends IEventBus<TEventOptions>, ICommandBus<TCmdOptions> { }
 
 export const EVENT_BUS = 'EVENT_BUS';

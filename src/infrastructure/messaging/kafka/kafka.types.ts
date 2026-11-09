@@ -27,7 +27,8 @@ export type {
 };
 
 /** Re-exported common contracts shared across transports. */
-import type { MessageEnvelope, MessageHandler, MessageInbox, PublishOptions, SubscriptionOptions } from '@messaging-common';
+import type { MessageEnvelope, MessageHandler, MessageInbox, PublishOptions, RetryPolicy, SubscriptionOptions } from '@messaging-common';
+import type { IEventPublisher, IEventSubscriber } from '@core/interfaces';
 
 export type { MessageEnvelope, MessageHandler, MessageInbox, PublishOptions, SubscriptionOptions };
 
@@ -127,9 +128,8 @@ export interface KafkaProducerOptions {
 
 export interface KafkaConsumerGroupOptions {
     /**
-     * Consumer group id. In the `IMessageBus` abstraction the `queueName`
-     * option doubles as the group id; a missing group id creates a generated,
-     * process-local group id suitable only for scratch subscriptions.
+     * Consumer group id.
+     * A missing group id creates a generated, process-local group id suitable only for scratch subscriptions.
      */
     groupId?: string;
     /** `fromBeginning` for a new consumer group (default false, maps to `auto.offset.reset: 'earliest'`). */
@@ -254,3 +254,33 @@ export function isRetriableKafkaError(error: unknown): boolean {
 }
 
 export { isPermanentError } from '@messaging-common';
+
+export interface KafkaRetryPolicy {
+    maxRetries?: number;
+    retryDelayMs?: number;
+}
+
+export interface KafkaSubscriptionOptions {
+    /**
+     * Kafka consumer group id.
+     */
+    groupId?: string;
+    /** Whether to start consuming from earliest offset when no offset is committed. */
+    fromBeginning?: boolean;
+    /** Retry configuration for transient errors. */
+    retry?: KafkaRetryPolicy | RetryPolicy;
+    /** Fine-grained consumer configuration overrides. */
+    consumerConfig?: Partial<ConsumerGlobalConfig & ConsumerTopicConfig>;
+}
+
+export interface IKafkaSubscriber extends IEventSubscriber<KafkaSubscriptionOptions> {
+    subscribeEvent<T = unknown>(
+        eventName: string,
+        handler: MessageHandler<T>,
+        options?: KafkaSubscriptionOptions
+    ): Promise<void>;
+}
+
+export interface IKafkaEventBus extends IEventPublisher, IKafkaSubscriber {
+    publishBatch<T>(eventName: string, items: Array<KafkaBatchItem<T>>, options?: PublishOptions): Promise<void>;
+}

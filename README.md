@@ -94,6 +94,19 @@ import { RedisIdempotencyRepository, withIdempotency } from "@vyhoang/microservi
 import { GrpcValidationPipe, ValidationSchema, TypedSchema } from "@vyhoang/microservice-clean/infrastructure/validation";
 import { GrpcBusinessExceptionFilter } from "@vyhoang/microservice-clean/infrastructure/filters";
 import { MetadataMapper } from "@vyhoang/microservice-clean/infrastructure/mapper";
+
+// Distributed Transactional Outbox Pattern Engine
+import { 
+  OutboxRelay, 
+  IOutboxStore, 
+  ClaimedOutboxEvent, 
+  OutboxRelayConfig, 
+  loadOutboxRelayConfig, 
+  calculateOutboxRetryDelay 
+} from "@vyhoang/microservice-clean/infrastructure/outbox";
+
+// Generic MongoDB Base Repository
+import { BaseRepository, IRepositoryMapper } from "@vyhoang/microservice-clean/infrastructure/repositories";
 ```
 
 > [!CAUTION]
@@ -109,8 +122,6 @@ import { MetadataMapper } from "@vyhoang/microservice-clean/infrastructure/mappe
 
 Unified messaging engine supporting **RabbitMQ** (Worker Queues & Direct Commands) and **Kafka** (High-throughput Event Streaming) as independent, enterprise-grade transports.
 
-> [!TIP]
-> **Tài liệu chuyên sâu từ A-Z:** Xem toàn bộ cẩm nang chi tiết từ lý thuyết, phân tích cấu hình từng file, so sánh hệ thống lớn (fintech, banking) đến checklist Production tại [docs/MESSAGING_ARCHITECTURE_GUIDE.md](docs/MESSAGING_ARCHITECTURE_GUIDE.md).
 
 #### A. RabbitMQ Messaging Engine
 
@@ -889,6 +900,148 @@ const totalCount = await esService.count({
   query: { match_all: {} }
 });
 const deleted = await esService.delete({ index: 'products', id: 'prod-100' });
+```
+
+---
+
+### 11. Transactional Outbox Pattern (`infrastructure/outbox`)
+
+High-reliability, framework-agnostic **Transactional Outbox Relay Engine** providing at-least-once event delivery semantics across microservices.
+
+#### Why Outbox Pattern?
+In distributed microservices, dual-writing to a local database and a message broker (RabbitMQ/Kafka) without distributed transactions inevitably causes inconsistency if the broker or network fails after the database commit. The Outbox Pattern guarantees consistency by saving events to an Outbox table in the **same database transaction** as the business entity, then asynchronously relaying them to the broker.
+
+#### Architecture & Safety Guarantees
+
+```text
+  [ Use Case ]
+       │
+       ▼ (1. Atomic DB Transaction)
+  ┌─────────────────────────────────────────────────────────┐
+  │ Local Database (PostgreSQL / MongoDB)                   │
+  │   - Business Entities                                   │
+  │   - Outbox Table (status: PENDING, next_attempt_at)     │
+  └────────────────────────────┬────────────────────────────┘
+                               │
+                               │ (2. claimBatch with lease & FOR UPDATE SKIP LOCKED)
+                               ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │ OutboxRelay Engine (Single or Multiple Replicas)        │
+  │   - Lease Concurrency & Renewal                         │
+  │   - Exponential Backoff + Jitter                        │
+  │   - Deduplication (messageId: event.id)                 │
+  └─────────────┬───────────────────────────┬───────────────┘
+                │                           │
+  (3. Publish)  ▼                           ▼ (4. Mark Status)
+  ┌───────────────────────────┐   ┌─────────────────────────┐
+  │ Message Bus               │   │ Local Database          │
+  │ (Kafka / RabbitMQ)        │   │ - markPublished()       │
+  │                           │   │ - markFailed()          │
+  └───────────────────────────┘   └─────────────────────────┘
+```
+
+- **Distributed Lease-Based Concurrency**: Multiple relay instances can run simultaneously across cluster replicas. Each instance generates a unique `instanceId` (`hostname:pid:uuid`) and acquires an atomic lease on a batch (`claimBatch`).
+- **Pessimistic Locking & Skip Locked**: On PostgreSQL, uses `FOR UPDATE SKIP LOCKED` for zero-contention concurrent worker polling. On MongoDB, uses atomic `findOneAndUpdate` with optimistic lease checks.
+- **Dynamic Lease Renewal**: Automatically renews expiring leases (`renewClaims`) when the remaining time is below `leaseRenewThresholdMs`, preventing other workers from stealing long-running publish jobs.
+- **Loss Detection & Safety**: If a lease is lost (e.g. prolonged network partition), the relay detects this and aborts status updates to prevent split-brain overwrites.
+- **Exponential Backoff with Jitter**: Failed publish attempts are rescheduled with exponential backoff and up to 20% random jitter (`calculateOutboxRetryDelay`), preventing thundering herds.
+- **Deduplication Message ID**: Each published event carries `messageId: event.id` in options/headers, enabling consumers with `withIdempotency` to safely deduplicate redeliveries.
+- **Graceful Shutdown**: On application termination, the relay stops accepting new batches, waits up to `shutdownGraceMs` for active jobs, and releases unfinished claims (`releaseClaims`) back to `PENDING` for other instances to pick up immediately.
+
+#### Core Interfaces
+
+```ts
+export interface IOutboxStore {
+  claimBatch(claimedBy: string, batchSize: number, leaseMs: number): Promise<ClaimedOutboxEvent[]>;
+  renewClaims(ids: string[], claimedBy: string, leaseMs: number): Promise<Set<string>>;
+  markPublished(id: string, claimedBy: string): Promise<boolean>;
+  markFailed(id: string, claimedBy: string, nextAttemptAt: Date, error: string): Promise<boolean>;
+  releaseClaims(ids: string[], claimedBy: string): Promise<number | void>;
+}
+```
+
+#### Usage Example (NestJS)
+
+```ts
+import { 
+  OutboxRelay, 
+  IOutboxStore, 
+  loadOutboxRelayConfig 
+} from "@vyhoang/microservice-clean/infrastructure/outbox";
+import { IMessageBus, ILogger } from "@vyhoang/microservice-clean/core";
+
+@Injectable()
+export class OrderOutboxRelay implements OnModuleInit, BeforeApplicationShutdown {
+  private readonly relay: OutboxRelay;
+
+  constructor(
+    private readonly outboxRepository: IOrderOutboxRepository, // implements IOutboxStore
+    private readonly eventBus: IMessageBus,
+    private readonly logger: ILogger,
+    config: ConfigService
+  ) {
+    this.relay = new OutboxRelay(this.outboxRepository, this.eventBus, this.logger, {
+      name: 'OrderOutboxRelay',
+      config: loadOutboxRelayConfig((key) => config.get(key))
+    });
+  }
+
+  onModuleInit(): void {
+    this.relay.start();
+  }
+
+  async beforeApplicationShutdown(): Promise<void> {
+    await this.relay.stop();
+  }
+
+  /** Run single batch on demand (useful for testing) */
+  async runOnce(): Promise<void> {
+    await this.relay.runOnce();
+  }
+}
+```
+
+#### Environment Variables Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `OUTBOX_POLL_INTERVAL_MS` | `1000` | Polling loop interval in milliseconds |
+| `OUTBOX_BATCH_SIZE` | `50` | Maximum number of events claimed per batch (capped at 1000) |
+| `OUTBOX_LEASE_MS` | `60000` | Lease duration in milliseconds for claimed events |
+| `OUTBOX_LEASE_RENEW_THRESHOLD_MS` | `15000` | Remaining time threshold to trigger batch lease renewal |
+| `OUTBOX_RETRY_BASE_MS` | `1000` | Base delay for exponential backoff retry |
+| `OUTBOX_RETRY_MAX_MS` | `300000` | Maximum cap for retry delay (5 minutes) |
+| `OUTBOX_SHUTDOWN_GRACE_MS` | `30000` | Maximum wait time during graceful shutdown |
+
+---
+
+### 12. Generic MongoDB Base Repository (`infrastructure/repositories`)
+
+Standard Clean Architecture base repository for MongoDB / Mongoose collections, encapsulating domain-to-persistence mapping and common query operations:
+
+```ts
+import { BaseRepository, IRepositoryMapper } from "@vyhoang/microservice-clean/infrastructure/repositories";
+import { Model } from "mongoose";
+
+export class MongoAccountRepository extends BaseRepository<Account, AccountDocument> {
+  constructor(model: Model<AccountDocument>, mapper: IRepositoryMapper<Account, AccountDocument>) {
+    super(model, mapper);
+  }
+
+  // Pre-built CRUD & query helpers out of the box:
+  // - findById(id)
+  // - create(entity)
+  // - update(filter, entity)
+  // - save(entity)
+  // - deleteById(id)
+  // - findOneByFilter(filter, options)
+  // - findManyByFilter(filter, options)
+  // - updateOneByFilter(filter, fields)
+  // - updateManyByFilter(filter, fields)
+  // - countByFilter(filter)
+  // - existsByFilter(filter)
+  // - deleteOneByFilter(filter)
+}
 ```
 
 ---

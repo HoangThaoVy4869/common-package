@@ -8,6 +8,7 @@ import type {
     MessageInbox,
     MessageHandler as CommonMessageHandler
 } from '@messaging-common';
+import type { ICommandBus, IEventPublisher, IEventSubscriber } from '@core/interfaces';
 
 // Re-export common contracts
 export type {
@@ -21,6 +22,15 @@ export type {
 
 export type RabbitMQMessageHandler<T = unknown> = CommonMessageHandler<T, Message>;
 export type MessageHandler<T = unknown> = RabbitMQMessageHandler<T>;
+
+export interface RabbitMQSubscriptionOptions extends SubscriptionOptions {
+    /** AMQP Queue name. */
+    queueName?: string;
+    /** Channel prefetch count. */
+    prefetch?: number;
+    /** Retry policy and DLQ routing. */
+    retry?: RetryPolicy;
+}
 
 export interface AlternateExchangeOptions {
     enabled?: boolean;
@@ -45,3 +55,22 @@ export interface RabbitMQEventBusOptions {
     inbox?: MessageInbox;
     drainTimeoutMs?: number;
 }
+
+export interface IRabbitMQSubscriber extends IEventSubscriber<RabbitMQSubscriptionOptions> {
+    subscribeEvent<T = unknown>(
+        eventName: string,
+        handler: RabbitMQMessageHandler<T>,
+        options?: RabbitMQSubscriptionOptions
+    ): Promise<void>;
+}
+
+export interface IRabbitMQCommandBus extends ICommandBus<RabbitMQSubscriptionOptions> {
+    sendCommand<T = unknown>(queueName: string, payload: T, options?: PublishOptions): Promise<void>;
+    handleCommand<T = unknown>(
+        queueName: string,
+        handler: RabbitMQMessageHandler<T>,
+        options?: RabbitMQSubscriptionOptions
+    ): Promise<void>;
+}
+
+export interface IRabbitMQEventBus extends IEventPublisher, IRabbitMQSubscriber, IRabbitMQCommandBus {}
