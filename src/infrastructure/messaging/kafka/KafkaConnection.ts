@@ -61,8 +61,20 @@ export class KafkaConnection {
         let kafkaJsModule: any;
         try {
             kafkaJsModule = require('@confluentinc/kafka-javascript').KafkaJS;
-        } catch (err) {
-            throw new Error('Failed to load @confluentinc/kafka-javascript: ' + (err as Error).message);
+        } catch (err: any) {
+            if (err && err.message && (err.message.includes('bindings') || err.message.includes('confluent-kafka-javascript.node'))) {
+                try {
+                    const path = require('path');
+                    const { execSync } = require('child_process');
+                    const pkgDir = path.dirname(require.resolve('@confluentinc/kafka-javascript/package.json', { paths: [__dirname] }));
+                    execSync('npm run install', { cwd: pkgDir, stdio: 'ignore' });
+                    kafkaJsModule = require('@confluentinc/kafka-javascript').KafkaJS;
+                } catch (healErr: any) {
+                    throw new Error('Failed to auto-resolve @confluentinc/kafka-javascript binary: ' + healErr.message);
+                }
+            } else {
+                throw new Error('Failed to load @confluentinc/kafka-javascript: ' + (err as Error).message);
+            }
         }
         this.client = new kafkaJsModule.Kafka(nativeConfig as any);
         this.admin = this.client.admin();
