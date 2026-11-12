@@ -107,7 +107,7 @@ export class KafkaEventBus implements IKafkaEventBus, IEventBus {
         const timeout = options.drainTimeoutMs ?? this.drainTimeoutMs;
         await Promise.all(this.consumers.map((consumer) => consumer.stop(timeout)));
         this.consumers.length = 0;
-        console.info('[Kafka] Event bus closed');
+        this.connection.logger.info('[Kafka] Event bus closed');
     }
 }
 

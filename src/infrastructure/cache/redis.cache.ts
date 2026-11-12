@@ -17,7 +17,7 @@ import {
     ListPushParams,
     ListRangeParams
 } from '@core/interfaces/IRedisService';
-import { createRedisClient, RedisConfigOptions } from './redis.client';
+import { createRedisClient, getRedisClient, RedisConfigOptions } from './redis.client';
 
 function serializeValue(value: any): string {
     if (value === null || value === undefined) return '';
@@ -46,8 +46,10 @@ export class RedisService implements IRedisService {
     constructor(clientOrOptions?: any | RedisConfigOptions) {
         if (clientOrOptions && (typeof clientOrOptions.get === 'function' || typeof clientOrOptions.set === 'function')) {
             this.client = clientOrOptions;
-        } else {
+        } else if (clientOrOptions?.newConnection) {
             this.client = createRedisClient(clientOrOptions);
+        } else {
+            this.client = getRedisClient(clientOrOptions);
         }
     }
 
@@ -66,7 +68,9 @@ export class RedisService implements IRedisService {
     async disconnect(): Promise<void> {
         if (this.client) {
             try {
-                await this.client.quit();
+                if (this.client.status !== 'end') {
+                    await this.client.quit();
+                }
             } catch {
                 this.client.disconnect();
             }

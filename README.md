@@ -23,8 +23,11 @@ npm install @vyhoang/microservice-clean
 Install optional peer dependencies depending on the modules your service uses:
 
 ```bash
-# Core DTO Validation (Required if using validateDto() helper)
-npm install class-transformer class-validator @nestjs/common reflect-metadata
+# NestJS Core & Reactive Streams (Required if using filters, pipes, or NestJS modules)
+npm install @nestjs/common rxjs
+
+# Class-based DTO Validation (Required if using validateDto() helper)
+npm install class-transformer class-validator reflect-metadata
 
 # Redis Cache & Distributed Lock
 npm install ioredis
@@ -46,9 +49,8 @@ npm install nestjs-i18n
 Import from supported subpaths:
 
 ```ts
-// Core (Entities, Value Objects, Interfaces, Errors, Validation, Response Envelopes)
+// Core (Entities, Value Objects, Interfaces, Errors, Response Envelopes)
 import { 
-  validateDto,
   ResponseHandler, 
   BusinessError, 
   NotFoundError, 
@@ -59,6 +61,7 @@ import {
   RequestContext, 
   REQUEST_METADATA,
   ILogger,
+  defaultConsoleLogger,
   ILanguageService,
   IRedisService,
   IIdempotencyRepository,
@@ -70,7 +73,7 @@ import {
   IElasticClient
 } from "@vyhoang/microservice-clean/core";
 
-// Messaging (RabbitMQ & Kafka as independent transports)
+// Messaging - Unified (Both Kafka & RabbitMQ)
 import { 
   RabbitMQConnection, 
   RabbitMQEventBus, 
@@ -78,6 +81,10 @@ import {
   KafkaEventBus,
   MessageEnvelope
 } from "@vyhoang/microservice-clean/infrastructure/messaging";
+
+// Messaging - Modular Subpaths (Isolated loading for lightweight services)
+import { KafkaConnection, KafkaEventBus } from "@vyhoang/microservice-clean/infrastructure/messaging/kafka";
+import { RabbitMQConnection, RabbitMQEventBus } from "@vyhoang/microservice-clean/infrastructure/messaging/rabbitmq";
 
 // Redis Cache & Distributed Lock (supports both natural args & object options)
 import { RedisService, BaseRedisService, createRedisClient } from "@vyhoang/microservice-clean/infrastructure/cache";
@@ -91,7 +98,17 @@ import { createLogger, PinoLogger, pinoElastic } from "@vyhoang/microservice-cle
 // Multi-language, Idempotency, Validation, Filters, Metadata
 import { createI18nOptions, createI18nAsyncConfig, LanguageService } from "@vyhoang/microservice-clean/infrastructure/languages";
 import { RedisIdempotencyRepository, withIdempotency } from "@vyhoang/microservice-clean/infrastructure/idempotency";
-import { GrpcValidationPipe, ValidationSchema, TypedSchema } from "@vyhoang/microservice-clean/infrastructure/validation";
+import { 
+  z, 
+  ZodType, 
+  ZodSchemaMap, 
+  formatZodIssues, 
+  GrpcValidationPipe, 
+  GrpcValidationException, 
+  GrpcValidationError, 
+  validateDto, 
+  validateZod 
+} from "@vyhoang/microservice-clean/infrastructure/validation";
 import { GrpcBusinessExceptionFilter } from "@vyhoang/microservice-clean/infrastructure/filters";
 import { MetadataMapper } from "@vyhoang/microservice-clean/infrastructure/mapper";
 
@@ -249,6 +266,8 @@ const kafka = new KafkaConnection({
   clientId: process.env.KAFKA_CLIENT_ID || "order-service",
   brokers: (process.env.KAFKA_BROKERS || "localhost:9092").split(","),
   allowAutoTopicCreation: false,
+  // Log level: 'nothing' | 'error' | 'warn' | 'info' | 'debug' (defaults to 'error' to prevent console spam)
+  logLevel: (process.env.KAFKA_LOG_LEVEL as any) || "error",
   // Native librdkafka controls. Idempotence is enabled by default by this package.
   requestTimeoutMs: 30_000,
   // Cluster & provisioning defaults (configurable via options or env vars)
@@ -324,6 +343,49 @@ await kafkaBus.close();
 await rabbitBus.close();
 await kafka.close();
 await rabbit.close();
+```
+
+#### D. Interface Segregation: IEventBus vs ICommandBus vs IMessageBus
+
+To follow Clean Architecture and the Interface Segregation Principle (ISP), the package separates messaging into dedicated contracts:
+
+```text
+       ┌─────────────────────┐       ┌──────────────────────┐
+       │      IEventBus      │       │     ICommandBus      │
+       │  (publish/subscribe)│       │(sendCommand/handleCmd)│
+       └──────────┬──────────┘       └──────────┬───────────┘
+                  │                             │
+                  └──────────────┬──────────────┘
+                                 ▼
+                     ┌──────────────────────┐
+                     │     IMessageBus      │
+                     │  (Unified Interface) │
+                     └──────────────────────┘
+```
+
+| Interface | Communication Paradigm | Typical Broker | Usage Guideline |
+|---|---|---|---|
+| **`IEventBus`** | **Pub/Sub (1-to-Many):** Broadcasts domain events (`order.created.v1`). | **Kafka** or RabbitMQ Fanout | Use when notifying other services of state changes. Kafka services should inject `IEventBus`. |
+| **`ICommandBus`** | **Point-to-Point (1-to-1):** Directs a task to a single worker queue. | **RabbitMQ** (Worker Queues) | Use when triggering async jobs where only **one** worker must process the task. |
+| **`IMessageBus`** | **Unified Bus:** Combines both `IEventBus` and `ICommandBus`. | **RabbitMQ** | Use when RabbitMQ powers both event broadcasting and background task queues. |
+
+> [!TIP]
+> **Best Practice for Kafka Services:**  
+> When a service uses Kafka, type your dependency injection token as **`IEventBus`** instead of `IMessageBus`. This prevents domain use cases from mistakenly invoking point-to-point commands that Kafka does not natively support as individual worker queues.
+
+#### E. Custom Logger Injection (Structured Logging)
+
+Both `KafkaConnection` and `RabbitMQConnection` accept an optional `logger?: ILogger` implementation (Pino, Winston, or NestJS Logger Adapter). When provided, all transport lifecycle events route cleanly through your structured JSON logger:
+
+```ts
+import { KafkaConnection } from "@vyhoang/microservice-clean/infrastructure/messaging";
+import { ILogger } from "@vyhoang/microservice-clean/core";
+
+const kafka = new KafkaConnection({
+  clientId: "product-service",
+  brokers: ["localhost:9092"],
+  logger: pinoLoggerAdapter // Routes all connect/error events through Pino
+});
 ```
 
 #### Kafka Publish & Subscribe
@@ -408,11 +470,36 @@ Kafka stores events within topic retention limits. To replay events:
 |---|---|---|
 | `KAFKA_BROKERS` | `localhost:9092` | Comma-separated list of Kafka broker endpoints |
 | `KAFKA_CLIENT_ID` | Service client ID | Identifier for the Kafka client instance |
+| `KAFKA_LOG_LEVEL` | `error` | Driver log level (`nothing`, `error`, `warn`, `info`, `debug`) |
 | `KAFKA_DEFAULT_NUM_PARTITIONS` | `1` | Default partitions when auto-creating topics |
 | `KAFKA_DEFAULT_REPLICATION_FACTOR` | `1` | Default replication factor (e.g. 3 in production cluster) |
 | `KAFKA_DEFAULT_MIN_INSYNC_REPLICAS` | `1` | Default min.insync.replicas (e.g. 2 in production cluster) |
 | `KAFKA_PRODUCER_COMPRESSION` | `zstd` / `lz4` | Producer compression algorithm (`lz4`, `zstd`, `snappy`, `gzip`) |
 | `KAFKA_PRODUCER_LINGER_MS` | `5` | Micro-batch linger time in milliseconds for higher throughput |
+
+#### Troubleshooting Native Bindings (`confluent-kafka-javascript.node`)
+
+`@confluentinc/kafka-javascript` relies on precompiled native C++ addons (`librdkafka`). If you encounter an error such as `Cannot find module '...confluent-kafka-javascript.node'` or missing bindings error on startup:
+
+1. **Rebuild the package manually:**
+   ```bash
+   npm rebuild @confluentinc/kafka-javascript
+   ```
+2. **On Windows:**
+   Ensure Visual Studio C++ Build Tools or Windows SDK is installed if compiling from source.
+3. **In Docker (Linux):**
+   Ensure `libc6-compat` (for Alpine) or `build-essential` / `python3` are available during `npm install` / `npm ci` stage:
+   ```dockerfile
+   # Alpine:
+   RUN apk add --no-cache libc6-compat g++ make python3
+   # Debian / Ubuntu:
+   RUN apt-get update && apt-get install -y build-essential python3
+   ```
+4. **If using `npm install --ignore-scripts`:**
+   Note that `--ignore-scripts` skips downloading native binaries. Re-run with:
+   ```bash
+   npm run --prefix node_modules/@confluentinc/kafka-javascript install
+   ```
 
 ---
 
@@ -461,6 +548,15 @@ const legacyUser = await redis.get({ key: 'user:100' });
 await redis.acquireLock({ key: 'lock:order:123', ttlSeconds: 30, lockValue: 'worker-1' });
 await redis.releaseLock({ key: 'lock:order:123', lockValue: 'worker-1' });
 ```
+
+#### Connection Pooling & Lifecycle Management
+- **Shared Singleton by Default**: When `RedisService` is instantiated without arguments (e.g. NestJS provider `useClass: RedisService`), it automatically delegates to `getRedisClient()` to share a single, long-lived TCP connection pool across all modules.
+- **Dedicated Connections on Demand**: If a specific service workflow needs an isolated Redis connection (e.g. Pub/Sub blocking subscriber), pass `{ newConnection: true }`:
+  ```ts
+  const isolatedRedis = new RedisService({ newConnection: true });
+  ```
+- **Atomic Lua Lock Release**: `releaseLock(key, lockValue)` executes an atomic Lua script (`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`), guaranteeing that a worker cannot accidentally release another worker's lock if its own lease expired.
+- **Custom Error Handling**: You can supply `onError?: (err: Error) => void` in `RedisConfigOptions` to route client connection errors to your structured logger instead of `console.error`.
 
 ---
 
@@ -544,60 +640,48 @@ This package provides **two specialized validation approaches** tailored to your
 
 ---
 
-#### Approach A: Schema-Based Validation for gRPC Microservices (`GrpcValidationPipe`)
+#### Approach A: Zod Schema-Based Validation for gRPC Microservices (`GrpcValidationPipe`)
 > **Best for:** Internal gRPC Microservices, Protobuf contracts, high-throughput systems.  
-> **Key benefits:** Zero duplicate class definitions, runs on raw Protobuf payloads, ultra-fast plain JS execution, seamless integration with `GrpcBusinessExceptionFilter`.
+> **Key benefits:** Built-in standard **Zod**, zero boilerplate class definitions, auto-derives TypeScript types with `z.infer<T>`, ultra-fast execution, and seamless integration with NestJS gRPC exception handling (`RpcException` with `status.INVALID_ARGUMENT`).
 
-##### Supported Schema Rules (`FieldRule`)
-| Rule | Type | Description |
-| :--- | :--- | :--- |
-| `required` | `boolean` | Field must not be `undefined`, `null`, or empty string `""` |
-| `type` | `'string' | 'number' | 'boolean' | 'array' | 'object'` | Validates primitive type |
-| `trim` | `boolean` | Trims whitespace before checking emptiness (strings) |
-| `minLength` / `maxLength` | `number` | String length boundaries |
-| `pattern` | `RegExp` | Regular expression validation |
-| `enum` | `(string | number)[]` | Whitelist allowed values |
-| `integer` | `boolean` | Requires safe integer (`Number.isSafeInteger`) |
-| `positive` | `boolean` | Requires numeric value > 0 |
-| `nonNegative` | `boolean` | Requires numeric value >= 0 |
-| `min` / `max` | `number` | Numeric value boundaries |
-| `minItems` / `maxItems` | `number` | Array length boundaries |
-| `uniqueBy` | `string` | Rejects duplicate property values in array items (e.g. `'variantId'`) |
-| `itemSchema` | `ValidationSchema` | Validates every object element inside an array |
-| `fields` | `ValidationSchema` | Validates nested single object properties |
-| `custom` | `(value, root) => string | boolean` | Custom function (return string for custom error message) |
+##### Re-exported Zod Utilities
+The validation module re-exports core Zod members directly, so consuming services do not need a separate `zod` import:
+- `z`, `ZodType`, `ZodSchema`, `ZodError`
+- `formatZodIssues(error)`
+- `validateZod(schema, data)` / `validateZodSync(schema, data)`
+- `GrpcValidationPipe`, `GrpcValidationException`
 
 ##### Usage Example (gRPC Service)
 
 > [!TIP]
-> **Type Safety with `TypedSchema<T>`:**
-> Using `TypedSchema<MyDTO>` bridges compile-time safety and runtime validation without leaking framework code into your Application layer:
-> - **Auto-complete**: IDE automatically suggests valid field names from your DTO.
-> - **Typo Prevention**: Mistyped property names trigger immediate compile errors.
-> - **Refactor-Safe**: Modifying a DTO field immediately alerts you if the schema is out of sync.
+> **Inferring Types with `z.infer`:**
+> Define your Zod schema and let TypeScript infer your DTO types automatically:
+> ```ts
+> export const createProductSchema = z.object({ ... });
+> export type CreateProductDTO = z.infer<typeof createProductSchema>;
+> ```
 
 ```ts
-// 1. Define method validation schemas using TypedSchema<T> (tied to Application DTO):
-import { TypedSchema, ValidationSchema } from '@vyhoang/microservice-clean/infrastructure/validation';
-import { InventoryOperationInputDTO } from '@product/application/dto';
+// 1. Define method validation schemas using Zod:
+import { z } from '@vyhoang/microservice-clean/infrastructure/validation';
 
-// TypedSchema<T> provides full auto-completion and prevents typo mismatches with your UseCase DTO:
-export const inventoryOperationSchema: TypedSchema<InventoryOperationInputDTO> = {
-  orderId: { required: true, type: 'string', trim: true, minLength: 1, message: 'orderId is required' },
-  items: {
-    required: true,
-    type: 'array',
-    minItems: 1,
-    uniqueBy: 'variantId', // Rejects duplicate variantId within the request
-    message: 'At least one item is required',
-    itemSchema: {
-      variantId: { required: true, type: 'string', minLength: 1, message: 'variantId is required' },
-      quantity: { required: true, type: 'number', integer: true, positive: true, message: 'quantity must be a positive integer' }
-    }
-  }
-};
+export const inventoryOperationSchema = z.object({
+  orderId: z.string().trim().min(1, 'orderId is required'),
+  items: z.array(
+    z.object({
+      variantId: z.string().trim().min(1, 'variantId is required'),
+      quantity: z.number().int().positive('quantity must be a positive integer')
+    })
+  ).min(1, 'At least one item is required')
+  .refine(
+    (items) => new Set(items.map((i) => i.variantId)).size === items.length,
+    { message: 'Duplicate variantId within items is not allowed' }
+  )
+});
 
-export const grpcMethodSchemas: Record<string, ValidationSchema> = {
+export type InventoryOperationDTO = z.infer<typeof inventoryOperationSchema>;
+
+export const grpcMethodSchemas = {
   confirmInventory: inventoryOperationSchema,
   reserveInventory: inventoryOperationSchema,
   releaseInventory: inventoryOperationSchema
@@ -1000,6 +1084,51 @@ export class OrderOutboxRelay implements OnModuleInit, BeforeApplicationShutdown
   }
 }
 ```
+
+#### Database Schema Recommendation (PostgreSQL / Drizzle)
+
+The outbox table requires a column to identify **which worker holds the lease** (`claimed_by`) alongside expiration tracking (`claimed_until`):
+
+```ts
+import { pgTable, uuid, varchar, jsonb, integer, text, timestamp, index } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+
+export const outbox = pgTable('outbox', {
+  id: uuid('id').primaryKey(),
+  aggregateId: uuid('aggregate_id').notNull(),
+  aggregateType: varchar('aggregate_type', { length: 50 }).notNull(),
+  eventType: varchar('event_type', { length: 100 }).notNull(),
+  payload: jsonb('payload').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('PENDING'), // PENDING | PROCESSING | PROCESSED | FAILED
+  retryCount: integer('retry_count').notNull().default(0),
+  lastError: text('last_error'),
+  batchId: uuid('batch_id'),                                           // Optional: batch correlation ID
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+  claimedBy: varchar('claimed_by', { length: 128 }),                   // Stores the worker instanceId holding the lease
+  claimedUntil: timestamp('claimed_until', { withTimezone: true }),     // Lease expiration timestamp
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  processedAt: timestamp('processed_at', { withTimezone: true })
+}, (table) => [
+  index('idx_outbox_claimable')
+    .on(table.nextAttemptAt, table.createdAt)
+    .where(sql`${table.status} IN ('PENDING', 'FAILED')`),
+  index('idx_outbox_expired_claims')
+    .on(table.claimedUntil)
+    .where(sql`${table.status} = 'PROCESSING'`)
+]);
+```
+
+> [!IMPORTANT]
+> **ClaimedBy vs BatchId:**
+> - `claimed_by (varchar 128)`: Represents **who holds the lease** (Pod/Worker token). The relay passes `this.instanceId` (`hostname:pid:uuid`) to `claimBatch(claimedBy, ...)`. Always make this column a string/varchar, **not a UUID**.
+> - `batch_id (uuid)`: Represents the optional **ID of the batch**. Keep this separate if you wish to correlate all records in a batch.
+> - **Custom Instance ID:** You can override `instanceId` via `OutboxRelayOptions.instanceId`:
+>   ```ts
+>   new OutboxRelay(store, bus, logger, {
+>     name: 'OrderOutboxRelay',
+>     instanceId: randomUUID() // Custom worker identifier
+>   });
+>   ```
 
 #### Environment Variables Configuration
 

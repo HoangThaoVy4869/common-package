@@ -13,6 +13,7 @@ import type {
     ConsumerGlobalConfig,
     ConsumerTopicConfig
 } from '@confluentinc/kafka-javascript';
+import type { ILogger } from '@core/interfaces';
 
 export type Consumer = KafkaJS.Consumer;
 export type Producer = KafkaJS.Producer;
@@ -113,6 +114,18 @@ export interface KafkaConnectionOptions {
      * without waiting for a package release.
      */
     librdkafkaConfig?: GlobalConfig;
+    /**
+     * Log level for Kafka native client (librdkafka).
+     * - 'nothing': Mute all Kafka client logs.
+     * - 'error': Log errors only.
+     * - 'warn': Log warnings and errors (Default, prevents noisy connection/rebalance stdout spam).
+     * - 'info': Log informational events (including connection and rebalance events).
+     * - 'debug': Detailed diagnostic logging.
+     * @default 'warn'
+     */
+    logLevel?: 'nothing' | 'error' | 'warn' | 'info' | 'debug';
+    /** Optional logger. Defaults to console. */
+    logger?: ILogger;
 }
 
 export interface KafkaProducerOptions {
@@ -157,6 +170,8 @@ export interface KafkaConsumerGroupOptions {
     isRetriable?: (error: unknown) => boolean;
     /** Optional topic/dql/retry naming config when the defaults do not fit. */
     dlq?: KafkaDlqTopicConfig;
+    /** Optional logger. Defaults to KafkaConnection's logger. */
+    logger?: ILogger;
 }
 
 export interface GroupMemberDescription {

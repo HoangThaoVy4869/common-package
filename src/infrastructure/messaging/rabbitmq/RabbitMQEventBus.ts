@@ -73,7 +73,7 @@ export class RabbitMQEventBus implements IRabbitMQEventBus, IMessageBus {
         const timeout = options.drainTimeoutMs ?? this.drainTimeoutMs;
         await Promise.all(this.consumers.map((consumer) => consumer.stop(timeout)));
         this.consumers.length = 0;
-        console.info('[MQ] Event bus closed');
+        this.connection.logger.info('[MQ] Event bus closed');
     }
 
     private requireReady(): void {

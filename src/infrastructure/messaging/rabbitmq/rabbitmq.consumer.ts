@@ -26,7 +26,7 @@ export class RabbitMQConsumer {
             confirm: true
         });
         this.channel.on('error', (error) => {
-            console.error(`[MQ] Consumer channel error ${kind}=${name}`, error);
+            this.connection.logger.error(`[MQ] Consumer channel error ${kind}=${name}`, { error });
         });
     }
 
@@ -48,7 +48,7 @@ export class RabbitMQConsumer {
                 (message) => {
                     if (message) {
                         void this.consume(topology, consumerChannel, message).catch((error) => {
-                            console.error(`[MQ] Consumer callback failed ${this.kind}=${this.name}`, error);
+                            this.connection.logger.error(`[MQ] Consumer callback failed ${this.kind}=${this.name}`, { error });
                         });
                     }
                 },
@@ -70,7 +70,7 @@ export class RabbitMQConsumer {
     async stop(drainTimeoutMs: number): Promise<void> {
         if (this.currentChannel && this.consumerTag) {
             await this.currentChannel.cancel(this.consumerTag).catch((error) => {
-                console.warn(`[MQ] Could not cancel consumer ${this.kind}=${this.name}`, error);
+                this.connection.logger.warn(`[MQ] Could not cancel consumer ${this.kind}=${this.name}`, { error });
             });
         }
         await this.waitForDrain(drainTimeoutMs);
@@ -84,7 +84,7 @@ export class RabbitMQConsumer {
             await this.handler(envelope.payload, message, envelope);
             channel.ack(message);
         } catch (error) {
-            console.error(`[MQ] Handler failed for ${this.kind}=${this.name}`, error);
+            this.connection.logger.error(`[MQ] Handler failed for ${this.kind}=${this.name}`, { error });
             await this.retryOrDeadLetter(topology, channel, message, error);
         } finally {
             this.inFlight--;
@@ -107,7 +107,7 @@ export class RabbitMQConsumer {
         if (isPermanent) {
             targetQueue = topology.deadLetterQueue;
             dlqReason = 'permanent-failure';
-            console.warn(`[MQ] Permanent error on ${this.kind}=${this.name}, forwarding directly to DLQ ${targetQueue}`);
+            this.connection.logger.warn(`[MQ] Permanent error on ${this.kind}=${this.name}, forwarding directly to DLQ ${targetQueue}`);
         } else if (retryCount < maxRetries && topology.retryQueue) {
             targetQueue = topology.retryQueue;
             nextRetryCount = retryCount + 1;
@@ -136,7 +136,7 @@ export class RabbitMQConsumer {
             });
             channel.ack(message);
         } catch (err) {
-            console.error(`[MQ] Could not route failed message to ${targetQueue}`, err);
+            this.connection.logger.error(`[MQ] Could not route failed message to ${targetQueue}`, { error: err });
             channel.nack(message, false, true);
         }
     }
@@ -152,7 +152,7 @@ export class RabbitMQConsumer {
                 })
             ]);
         } catch (error) {
-            console.warn(`[MQ] Closing ${this.kind}=${this.name} with handlers in flight`, error);
+            this.connection.logger.warn(`[MQ] Closing ${this.kind}=${this.name} with handlers in flight`, { error });
         } finally {
             if (timeout) clearTimeout(timeout);
         }

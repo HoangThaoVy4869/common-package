@@ -3,6 +3,8 @@ import Redis, { type Redis as RedisType, type RedisOptions } from "ioredis";
 export interface RedisConfigOptions extends RedisOptions {
     url?: string;
     uri?: string;
+    newConnection?: boolean;
+    onError?: (err: Error) => void;
 }
 
 let redisClient: RedisType | null = null;
@@ -27,7 +29,9 @@ export function createRedisClient(options?: RedisConfigOptions): RedisType {
     const client = connectionUrl ? new Redis(connectionUrl, baseOptions) : new Redis(baseOptions);
 
     client.on('error', (err) => {
-        if (process.env.NODE_ENV !== 'test') {
+        if (options?.onError) {
+            options.onError(err);
+        } else if (process.env.NODE_ENV !== 'test') {
             console.error('[RedisClient] Connection error:', err.message);
         }
     });

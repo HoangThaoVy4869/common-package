@@ -29,6 +29,7 @@ export interface TopologySubscription {
     name: string;
     options: SubscriptionOptions;
     alternateExchange?: string;
+    logger?: { warn(msg: string): void };
 }
 
 /**
@@ -51,7 +52,11 @@ export async function declareSubscriptionTopology(
 
     if (!durableName) {
         if (maxRetries > 0) {
-            console.warn(`[MQ] Retry/DLQ disabled for anonymous subscription ${subscription.name}; set queueName to enable it`);
+            if (subscription.logger) {
+                subscription.logger.warn(`[MQ] Retry/DLQ disabled for anonymous subscription ${subscription.name}; set queueName to enable it`);
+            } else if (process.env.NODE_ENV !== 'test') {
+                console.warn(`[MQ] Retry/DLQ disabled for anonymous subscription ${subscription.name}; set queueName to enable it`);
+            }
         }
         const reply = await channel.assertQueue('', { exclusive: true, autoDelete: true });
         if (subscription.kind === 'event') await channel.bindQueue(reply.queue, subscription.name, '');

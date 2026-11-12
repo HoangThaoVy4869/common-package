@@ -1,5 +1,6 @@
 import { AmqpConnectionManager, ChannelWrapper, CreateChannelOpts, SetupFunc, connect } from 'amqp-connection-manager';
 import { RabbitMQConnectionOptions } from './rabbitmq.types';
+import { type ILogger, defaultConsoleLogger } from '@core/interfaces';
 
 export type { RabbitMQConnectionOptions, AlternateExchangeOptions } from './rabbitmq.types';
 
@@ -20,6 +21,7 @@ export class RabbitMQConnection {
     private closed = false;
 
     readonly publisher: ChannelWrapper;
+    readonly logger: ILogger;
     readonly alternateExchangeConfig: {
         enabled: boolean;
         exchangeName: string;
@@ -27,6 +29,7 @@ export class RabbitMQConnection {
     };
 
     constructor(options: RabbitMQConnectionOptions = {}) {
+        this.logger = options.logger ?? defaultConsoleLogger;
         const urls = options.urls?.length ? options.urls : [options.url || process.env.RABBITMQ_URL || 'amqp://localhost'];
         this.connectTimeoutMs = options.connectTimeoutMs ?? 30_000;
         this.alternateExchangeConfig = {
@@ -54,12 +57,12 @@ export class RabbitMQConnection {
             });
         }
 
-        this.manager.on('connect', () => console.info('[MQ] Connected'));
-        this.manager.on('connectFailed', ({ err }) => console.error('[MQ] Connection attempt failed', err));
-        this.manager.on('disconnect', ({ err }) => console.warn('[MQ] Disconnected; reconnecting', err));
-        this.manager.on('blocked', ({ reason }) => console.warn(`[MQ] Connection blocked: ${reason}`));
-        this.manager.on('unblocked', () => console.info('[MQ] Connection unblocked'));
-        this.publisher.on('error', (error) => console.error('[MQ] Publisher channel error', error));
+        this.manager.on('connect', () => this.logger.info('[MQ] Connected'));
+        this.manager.on('connectFailed', ({ err }) => this.logger.error('[MQ] Connection attempt failed', { error: err }));
+        this.manager.on('disconnect', ({ err }) => this.logger.warn('[MQ] Disconnected; reconnecting', { error: err }));
+        this.manager.on('blocked', ({ reason }) => this.logger.warn(`[MQ] Connection blocked: ${reason}`));
+        this.manager.on('unblocked', () => this.logger.info('[MQ] Connection unblocked'));
+        this.publisher.on('error', (error) => this.logger.error('[MQ] Publisher channel error', { error }));
     }
 
     get isReady(): boolean {

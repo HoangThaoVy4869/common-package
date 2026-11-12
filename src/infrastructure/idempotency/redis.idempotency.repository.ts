@@ -50,6 +50,19 @@ export class RedisIdempotencyRepository implements IIdempotencyRepository {
             return;
         }
 
+        const client = typeof (this.redisService as any).getClient === 'function' ? (this.redisService as any).getClient() : null;
+        if (client && typeof client.eval === 'function') {
+            const luaScript = `
+                if redis.call("get", KEYS[1]) == ARGV[1] then
+                    return redis.call("del", KEYS[1])
+                else
+                    return 0
+                end
+            `;
+            await client.eval(luaScript, 1, fullKey, ownerId);
+            return;
+        }
+
         const currentOwner = await this.redisService.get({ key: fullKey });
         if (currentOwner === ownerId) {
             await this.redisService.delete({ key: fullKey });

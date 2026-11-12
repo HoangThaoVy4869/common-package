@@ -8,7 +8,7 @@ import type {
     MessageInbox,
     MessageHandler as CommonMessageHandler
 } from '@messaging-common';
-import type { ICommandBus, IEventPublisher, IEventSubscriber } from '@core/interfaces';
+import type { ICommandBus, IEventPublisher, IEventSubscriber, ILogger } from '@core/interfaces';
 
 // Re-export common contracts
 export type {
@@ -46,6 +46,8 @@ export interface RabbitMQConnectionOptions {
     reconnectTimeInSeconds?: number;
     publishTimeoutMs?: number;
     alternateExchange?: AlternateExchangeOptions;
+    /** Optional custom logger. Defaults to console. */
+    logger?: ILogger;
 }
 
 export interface RabbitMQEventBusOptions {

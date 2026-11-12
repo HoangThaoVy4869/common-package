@@ -19,6 +19,7 @@ export interface PinoElasticOptions {
     flushInterval?: number;
     'bulk-size'?: number; // deprecated
     refreshOnCompletion?: boolean | string;
+    onError?: (err: Error) => void;
 }
 
 interface LogDocument {
@@ -130,7 +131,9 @@ export function pinoElastic(opts: PinoElasticOptions): Transform {
             (error as any).document = doc;
             if (splitter.listenerCount('insertError') > 0) {
                 splitter.emit('insertError', error);
-            } else {
+            } else if (opts.onError) {
+                opts.onError(error);
+            } else if (process.env.NODE_ENV !== 'test') {
                 console.error('[pinoElastic] Dropped log document:', error);
             }
         }
@@ -145,7 +148,9 @@ export function pinoElastic(opts: PinoElasticOptions): Transform {
         (err) => {
             if (splitter.listenerCount('error') > 0) {
                 splitter.emit('error', err);
-            } else {
+            } else if (opts.onError) {
+                opts.onError(err);
+            } else if (process.env.NODE_ENV !== 'test') {
                 console.error('[pinoElastic] Elasticsearch connection/indexing error:', err);
             }
         }

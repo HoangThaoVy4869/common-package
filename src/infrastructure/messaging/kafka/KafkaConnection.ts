@@ -8,6 +8,7 @@
 
 import type { KafkaJS } from '@confluentinc/kafka-javascript';
 import type { KafkaConnectionOptions, KafkaTopicConfig, KafkaTopicDefinition, GroupMemberDescription } from '@kafka/kafka.types';
+import { type ILogger, defaultConsoleLogger } from '@core/interfaces';
 
 export interface KafkaConnectionEventHandlers {
     onConnect?: () => void;
@@ -19,10 +20,46 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_TOPIC_REPLICATION = 1;
 const DEFAULT_TOPIC_PARTITIONS = 4;
 
+const KAFKA_LOG_LEVEL_MAP: Record<'nothing' | 'error' | 'warn' | 'info' | 'debug', number> = {
+    nothing: 0,
+    error: 3,
+    warn: 4,
+    info: 6,
+    debug: 7
+};
+
+const KAFKAJS_LOG_LEVEL_MAP: Record<'nothing' | 'error' | 'warn' | 'info' | 'debug', number> = {
+    nothing: 0,
+    error: 1,
+    warn: 2,
+    info: 3,
+    debug: 4
+};
+
+function normalizeLogLevel(val: unknown): 'nothing' | 'error' | 'warn' | 'info' | 'debug' {
+    if (typeof val === 'string') {
+        const lower = val.toLowerCase().trim();
+        if (lower === 'nothing' || lower === 'none' || lower === '0') return 'nothing';
+        if (lower === 'error' || lower === 'err' || lower === '1' || lower === '3') return 'error';
+        if (lower === 'warn' || lower === 'warning' || lower === '2' || lower === '4') return 'warn';
+        if (lower === 'info' || lower === '6') return 'info';
+        if (lower === 'debug' || lower === '7') return 'debug';
+    }
+    if (typeof val === 'number' && !Number.isNaN(val)) {
+        if (val === 0) return 'nothing';
+        if (val === 1 || val === 3) return 'error';
+        if (val === 2 || val === 4) return 'warn';
+        if (val === 6) return 'info';
+        if (val === 7) return 'debug';
+    }
+    return 'error';
+}
+
 export class KafkaConnection {
     readonly client: KafkaJS.Kafka;
     readonly admin: KafkaJS.Admin;
     readonly producer: KafkaJS.Producer;
+    readonly logger: ILogger;
     private readonly options: KafkaConnectionOptions;
     private readonly topology = new Map<string, Promise<void>>();
     private closed = false;
@@ -31,6 +68,7 @@ export class KafkaConnection {
     private handlers: KafkaConnectionEventHandlers = {};
 
     constructor(options: KafkaConnectionOptions) {
+        this.logger = options.logger ?? defaultConsoleLogger;
         this.options = {
             ...options,
             clientId: options.clientId ?? 'microservice',
@@ -38,9 +76,18 @@ export class KafkaConnection {
             connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
         };
 
+        const configuredLogLevel = normalizeLogLevel(this.options.logLevel ?? process.env.KAFKA_LOG_LEVEL);
+        const rdKafkaLogLevel = KAFKA_LOG_LEVEL_MAP[configuredLogLevel] ?? 3;
+        const kafkaJsLogLevel = KAFKAJS_LOG_LEVEL_MAP[configuredLogLevel] ?? 1;
+
         const nativeConfig: Record<string, unknown> = {
             'bootstrap.servers': this.options.brokers.join(','),
             'client.id': this.options.clientId,
+            // 0: NOTHING, 3: ERR, 4: WARN, 6: INFO, 7: DEBUG. Default to 3 (ERR) to prevent raw console spam on connect/retry/rebalance.
+            'log_level': rdKafkaLogLevel,
+            kafkaJS: {
+                logLevel: kafkaJsLogLevel
+            },
             // This covers TCP plus TLS/SASL setup. `socket.timeout.ms` is a request timeout, not a connection timeout.
             'socket.connection.setup.timeout.ms': this.options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
             ...(this.options.requestTimeoutMs !== undefined ? { 'socket.timeout.ms': this.options.requestTimeoutMs } : {}),
@@ -62,19 +109,15 @@ export class KafkaConnection {
         try {
             kafkaJsModule = require('@confluentinc/kafka-javascript').KafkaJS;
         } catch (err: any) {
-            if (err && err.message && (err.message.includes('bindings') || err.message.includes('confluent-kafka-javascript.node'))) {
-                try {
-                    const path = require('path');
-                    const { execSync } = require('child_process');
-                    const pkgDir = path.dirname(require.resolve('@confluentinc/kafka-javascript/package.json', { paths: [__dirname] }));
-                    execSync('npm run install', { cwd: pkgDir, stdio: 'ignore' });
-                    kafkaJsModule = require('@confluentinc/kafka-javascript').KafkaJS;
-                } catch (healErr: any) {
-                    throw new Error('Failed to auto-resolve @confluentinc/kafka-javascript binary: ' + healErr.message);
-                }
-            } else {
-                throw new Error('Failed to load @confluentinc/kafka-javascript: ' + (err as Error).message);
+            const isBindingError = err?.message && (err.message.includes('bindings') || err.message.includes('confluent-kafka-javascript.node'));
+            if (isBindingError) {
+                throw new Error(
+                    `[KafkaConnection] Failed to load native binary bindings for '@confluentinc/kafka-javascript'. ` +
+                    `Please run 'npm rebuild @confluentinc/kafka-javascript' or reinstall dependencies. ` +
+                    `See README troubleshooting section for details. Original error: ${err.message}`
+                );
             }
+            throw new Error(`[KafkaConnection] Failed to load @confluentinc/kafka-javascript: ${(err as Error).message}`);
         }
         this.client = new kafkaJsModule.Kafka(nativeConfig as any);
         this.admin = this.client.admin();
@@ -128,7 +171,7 @@ export class KafkaConnection {
 
             this.connected = true;
             this.handlers.onConnect?.();
-            console.info(`[Kafka] Connected (clientId=${this.options.clientId})`);
+            this.logger.info(`[Kafka] Connected (clientId=${this.options.clientId})`);
         } catch (error) {
             await Promise.all([this.producer.disconnect().catch(() => undefined), this.admin.disconnect().catch(() => undefined)]);
             const normalized = error instanceof Error ? error : new Error(String(error));
@@ -188,7 +231,7 @@ export class KafkaConnection {
             }
         }
 
-        console.info(`[Kafka] Topics validated successfully (${expected.length} topics confirmed)`);
+        this.logger.info(`[Kafka] Topics validated successfully (${expected.length} topics confirmed)`);
     }
 
     /**
@@ -295,7 +338,7 @@ export class KafkaConnection {
         await this.admin.disconnect().catch(() => undefined);
         this.topology.clear();
         this.handlers.onDisconnect?.();
-        console.info(`[Kafka] Connection closed (clientId=${this.options.clientId})`);
+        this.logger.info(`[Kafka] Connection closed (clientId=${this.options.clientId})`);
     }
 }
 

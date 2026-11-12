@@ -14,9 +14,11 @@ import { KafkaConnection } from '@kafka/KafkaConnection';
 import { buildMessageContext, KAFKA_HEADERS, parseEnvelope } from '@kafka/kafka.codec';
 import { isPermanentError, type KafkaConsumerGroupOptions, type KafkaConsumerHandle, type KafkaMessageContext } from '@kafka/kafka.types';
 import type { MessageHandler } from '@messaging-common';
+import type { ILogger } from '@core/interfaces';
 
 export class KafkaConsumer implements KafkaConsumerHandle {
     readonly consumer: KafkaJS.Consumer;
+    private readonly logger: ILogger;
     private running = false;
     private stopping = false;
     private readonly retryTimers = new Map<string, NodeJS.Timeout>();
@@ -32,6 +34,7 @@ export class KafkaConsumer implements KafkaConsumerHandle {
         private readonly options: KafkaConsumerGroupOptions,
         id: number
     ) {
+        this.logger = options.logger ?? connection.logger;
         const groupId = options.groupId ?? `anonymous-${name}-${id}`;
         const rawConsumerConfig = (options.consumerConfig ?? {}) as Record<string, unknown>;
         const { groupId: _ignored, ...consumerConfigRest } = rawConsumerConfig;
@@ -54,7 +57,7 @@ export class KafkaConsumer implements KafkaConsumerHandle {
         if ('on' in this.consumer && typeof (this.consumer as any).on === 'function') {
             try {
                 (this.consumer as any).on('error', (error: unknown) => {
-                    console.error(`[Kafka] Consumer error group=${groupId}`, error);
+                    this.logger.error(`[Kafka] Consumer error group=${groupId}`, { error });
                 });
             } catch {
                 // Ignore: .on() is a notImplemented stub in @confluentinc/kafka-javascript
@@ -105,10 +108,10 @@ export class KafkaConsumer implements KafkaConsumerHandle {
 
         await this.consumer.stop().catch((error) => {
             if (error?.code !== -170 && error?.type !== 'ERR__NOT_IMPLEMENTED') {
-                console.warn('[Kafka] consumer.stop failed', error);
+                this.logger.warn('[Kafka] consumer.stop failed', { error });
             }
         });
-        await this.consumer.disconnect().catch((error) => console.warn('[Kafka] consumer.disconnect failed', error));
+        await this.consumer.disconnect().catch((error) => this.logger.warn('[Kafka] consumer.disconnect failed', { error }));
     }
 
     /** Returns true only when it is safe to commit this record's offset. */
@@ -148,9 +151,9 @@ export class KafkaConsumer implements KafkaConsumerHandle {
             : !isPermanentError(error);
 
         if (!isRetriable) {
-            console.warn(
+            this.logger.warn(
                 `[Kafka] Permanent error on ${this.kind}=${this.name} topic=${topic} partition=${partition}, forwarding directly to DLQ without pause.`,
-                error instanceof Error ? error.message : error
+                { error: error instanceof Error ? error.message : error }
             );
             const deadLettered = await this.sendToDeadLetter(topic, context, 'permanent-failure', error);
             if (deadLettered) {
@@ -167,9 +170,9 @@ export class KafkaConsumer implements KafkaConsumerHandle {
 
         if (attempts < maxRetries) {
             this.retryCounts.set(partitionKey, attempts + 1);
-            console.warn(
+            this.logger.warn(
                 `[Kafka] handler failed ${this.kind}=${this.name} topic=${topic} partition=${partition} attempt=${attempts + 1}/${maxRetries}, pausing ${retryDelayMs}ms`,
-                error instanceof Error ? error.message : error
+                { error: error instanceof Error ? error.message : error }
             );
             await this.pauseAndReschedule(topic, partition, partitionKey, context.offset, retryDelayMs);
             return false;
@@ -205,7 +208,7 @@ export class KafkaConsumer implements KafkaConsumerHandle {
                     this.consumer.seek({ topic, partition, offset });
                     this.consumer.resume([{ topic, partitions: [partition] }]);
                 } catch (error) {
-                    console.error('[Kafka] resume failed', error);
+                    this.logger.error('[Kafka] resume failed', { error });
                 }
             }, retryDelayMs)
         );
@@ -248,10 +251,10 @@ export class KafkaConsumer implements KafkaConsumerHandle {
                 topic: dlqTopic,
                 messages: [{ key: context.key, value: Buffer.from(JSON.stringify(envelope), 'utf8'), headers }]
             });
-            console.warn(`[Kafka] ${this.kind}=${this.name} dead-lettered to ${dlqTopic} (${reason})`, { originalOffset: context.offset });
+            this.logger.warn(`[Kafka] ${this.kind}=${this.name} dead-lettered to ${dlqTopic} (${reason})`, { originalOffset: context.offset });
             return true;
         } catch (err) {
-            console.error(`[Kafka] could not dead-letter ${this.kind}=${this.name} to ${dlqTopic}`, err);
+            this.logger.error(`[Kafka] could not dead-letter ${this.kind}=${this.name} to ${dlqTopic}`, { error: err });
             return false;
         }
     }

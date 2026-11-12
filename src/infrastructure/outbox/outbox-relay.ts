@@ -12,6 +12,8 @@ export interface OutboxRelayOptions {
     config?: OutboxRelayConfig;
     /** Builds the published payload. Defaults to the stored payload. */
     mapPayload?: (event: ClaimedOutboxEvent) => unknown;
+    /** Override the lease holder id. Defaults to `${hostname}:${pid}:${randomUUID()}`. */
+    instanceId?: string;
 }
 
 type PublishOutcome = 'succeeded' | 'failed' | 'lost';
@@ -27,7 +29,7 @@ type PublishOutcome = 'succeeded' | 'failed' | 'lost';
  * `await stop()` when it shuts down.
  */
 export class OutboxRelay {
-    private readonly instanceId = `${hostname().slice(0, 64)}:${process.pid}:${randomUUID()}`;
+    private readonly instanceId: string;
     private readonly settings: OutboxRelayConfig;
     private readonly tag: string;
     private timer?: NodeJS.Timeout;
@@ -41,6 +43,7 @@ export class OutboxRelay {
         private readonly logger: ILogger,
         private readonly options: OutboxRelayOptions
     ) {
+        this.instanceId = options.instanceId ?? `${hostname().slice(0, 64)}:${process.pid}:${randomUUID()}`;
         this.settings = options.config ?? loadOutboxRelayConfig();
         this.tag = `[${options.name}]`;
     }
